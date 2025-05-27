@@ -1,0 +1,36 @@
+opam-version: "2.0"
+maintainer: "Jane Street developers"
+authors: ["Jane Street Group, LLC"]
+homepage: "https://github.com/janestreet/await"
+bug-reports: "https://github.com/janestreet/await/issues"
+dev-repo: "git+https://github.com/janestreet/await.git"
+doc: "https://ocaml.janestreet.com/ocaml-core/latest/doc/await/index.html"
+license: "MIT"
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]
+depends: [
+  "ocaml" {>= "5.2.0"}
+  "async"
+  "base"
+  "basement"
+  "core"
+  "core_kernel"
+  "expect_test_helpers_core"
+  "oxcaml_effect"
+  "portable"
+  "ppx_debug_assert"
+  "ppx_jane"
+  "stdio"
+  "unique"
+  "uopt"
+  "backoff"
+  "base-threads"
+  "dune"                     {>= "3.17.0"}
+]
+available: arch != "arm32" & arch != "x86_32"
+synopsis: "Low-level support for suspending and resuming fibers in OxCaml"
+description: "
+[Await] is a library that provides low-level support for suspending
+and resuming fibers with support for propagation of cancelation and termination.
+"

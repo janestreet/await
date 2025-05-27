@@ -1,0 +1,6 @@
+(library
+ (name await_blocking)
+ (public_name await.blocking)
+ (libraries await base)
+ (preprocess
+  (pps ppx_jane)))

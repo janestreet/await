@@ -1,0 +1,6 @@
+(library
+ (name await_atomic_bitset)
+ (public_name await.atomic_bitset)
+ (libraries backoff base portable)
+ (preprocess
+  (pps ppx_jane)))

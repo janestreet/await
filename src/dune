@@ -1,0 +1,6 @@
+(library
+ (name await)
+ (public_name await)
+ (libraries backoff core portable)
+ (preprocess
+  (pps ppx_jane)))
