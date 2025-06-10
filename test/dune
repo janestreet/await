@@ -2,7 +2,7 @@
  (name await_test)
  (public_name await.test)
  (libraries async await await_blocking await_in_async await_sync
-   await_test_helpers core expect_test_helpers_core.expect_test_helpers_base
-   stdio)
+   await_test_helpers core_kernel.caml_threads core core_unix.core_thread
+   expect_test_helpers_core.expect_test_helpers_base portable stdio threads)
  (preprocess
   (pps ppx_jane)))

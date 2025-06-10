@@ -1,7 +1,6 @@
 (library
  (name await_atomic_bitset_test)
  (public_name await.atomic_bitset.test)
- (libraries await_atomic_bitset base
-   expect_test_helpers_core.expect_test_helpers_base stdio threads)
+ (libraries await_atomic_bitset base ppx_sexp_conv.runtime-lib stdio threads)
  (preprocess
   (pps ppx_jane)))

@@ -10,18 +10,24 @@ let%expect_test "Awaitable.await signaled" =
   setup Terminator.never ~f:(fun w ->
     let state = Awaitable.make `Initial in
     let state_is v = phys_equal (Awaitable.get state) v in
+    let barrier = Barrier.create 2 in
     Structured.with_scope w () ~f:(fun _w s ->
       Structured.Scope.(add [@mode portable local]) ~spawn ~setup s ~f:(fun w () ->
         Stdio.print_endline "Child running";
+        Barrier.await w barrier;
         Awaitable.set state `Child_running;
         Awaitable.signal state;
-        while state_is `Child_running do
-          match Awaitable.await w state ~until_phys_unequal_to:`Child_running with
-          | Signaled -> Stdio.print_endline "Child signaled"
-          | Terminated ->
-            Stdio.print_endline "Child terminated";
-            raise Terminated
-        done);
+        if state_is `Child_running
+        then
+          while state_is `Child_running do
+            match Awaitable.await w state ~until_phys_unequal_to:`Child_running with
+            | Signaled -> Stdio.print_endline "Child signaled, or parent got to it first"
+            | Terminated ->
+              Stdio.print_endline "Child terminated";
+              raise Terminated
+          done
+        else Stdio.print_endline "Child signaled, or parent got to it first");
+      Barrier.await w barrier;
       if state_is `Initial
       then
         while state_is `Initial do
@@ -39,7 +45,7 @@ let%expect_test "Awaitable.await signaled" =
     {|
     Child running
     Parent signaled, or child got to it first
-    Child signaled
+    Child signaled, or parent got to it first
     |}]
 ;;
 

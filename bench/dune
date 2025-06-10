@@ -1,0 +1,6 @@
+(library
+ (name await_bench)
+ (public_name await.bench)
+ (libraries await await_blocking await_sync await_test_helpers base threads)
+ (preprocess
+  (pps ppx_jane)))

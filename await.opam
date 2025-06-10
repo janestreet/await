@@ -16,15 +16,17 @@ depends: [
   "basement"
   "core"
   "core_kernel"
+  "core_unix"
   "expect_test_helpers_core"
   "oxcaml_effect"
   "portable"
   "ppx_debug_assert"
   "ppx_jane"
+  "ppx_sexp_conv"
   "stdio"
   "unique"
   "uopt"
-  "backoff"
+  "backoff"                  {= "0.1.1+jst"}
   "base-threads"
   "dune"                     {>= "3.17.0"}
 ]

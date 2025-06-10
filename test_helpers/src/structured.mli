@@ -4,7 +4,7 @@
 
 open Await
 
-module (Scope @ nonportable) : sig
+module (Scope @@ nonportable) : sig
   (** Represents a scope for concurrency. *)
   type 'a t : value mod contended portable
 

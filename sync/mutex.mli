@@ -1,0 +1,276 @@
+@@ portable
+
+open! Basement
+
+(** [k t] is the type of a mutex protecting the contents of the [k] capsule. *)
+type 'k t : value mod contended portable
+
+(** [create k] creates a new mutex for the capsule ['k] associated with [k], consuming the
+    key itself. *)
+val create : 'k Capsule.Key.t @ unique -> 'k t
+
+(** [Poisoned] is the exception raised when trying to acquire a mutex that has been
+    poisoned. *)
+exception Poisoned
+
+(** [with_access w t ~f] acquires [t], runs [f] within the associated capsule, then
+    releases [t]. If [t] is locked then uses [w] to wait until it is unlocked.
+
+    @raise Poisoned if [t] cannot be acquired because it is poisoned.
+    @raise Terminated if [w] is terminated before the mutex is acquired. *)
+val with_access
+  :  Await.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Access.t -> 'a @ contended portable unique) @ local once portable
+  -> 'a @ contended once portable unique
+
+(** [with_access_poisoning w t ~f] acquires [t], runs [f] within the associated capsule,
+    then releases [t]. If [t] is locked then uses [w] to wait until it is unlocked.
+
+    Poisons [t] if [f] raises an uncaught exception.
+
+    @raise Poisoned if [t] cannot be acquired because it is poisoned.
+    @raise Terminated if [w] is terminated before the mutex is acquired. *)
+val with_access_poisoning
+  :  Await.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Access.t -> 'a @ contended portable unique) @ local once portable
+  -> 'a @ contended once portable unique
+
+(** [with_access_or_cancel w c t f] is [Completed (with_access w t f)] if [c] is not
+    canceled, otherwise it is [Canceled].
+
+    @raise Terminated if [w] is terminated, even if [c] is canceled. *)
+val with_access_or_cancel
+  :  Await.t @ local
+  -> Await.Cancellation.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Access.t -> 'a @ contended portable unique) @ local once portable
+  -> 'a Await.Or_canceled.t @ contended once portable unique
+
+(** [with_access_or_cancel_poisoning w c t f] is [Completed (with_access_poisoning w t f)]
+    if [c] is not canceled, otherwise it is [Canceled].
+
+    Poisons [t] if [f] raises an uncaught exception.
+
+    @raise Terminated if [w] is terminated, even if [c] is canceled. *)
+val with_access_or_cancel_poisoning
+  :  Await.t @ local
+  -> Await.Cancellation.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Access.t -> 'a @ contended portable unique) @ local once portable
+  -> 'a Await.Or_canceled.t @ contended once portable unique
+
+(** [with_password w t f] acquires [t], runs [f] with permission to access the associated
+    capsule, then releases [t]. If [t] is locked then uses [w] to wait until it is
+    unlocked.
+
+    @raise Poisoned if [t] cannot be acquired because it is poisoned.
+    @raise Terminated if [w] is terminated before the mutex is acquired. *)
+val with_password
+  :  Await.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
+  -> 'a @ unique
+
+(** [with_password_poisoning w t f] acquires [t], runs [f] with permission to access the
+    associated capsule, then releases [t]. If [t] is locked then uses [w] to wait until it
+    is unlocked.
+
+    Poisons [t] if [f] raises an exception.
+
+    @raise Poisoned if [t] cannot be acquired because it is poisoned.
+    @raise Terminated if [w] is terminated before the mutex is acquired. *)
+val with_password_poisoning
+  :  Await.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
+  -> 'a @ unique
+
+(** [with_password_or_cancel w c t f] is [Completed (with_password w t f)] if [c] is not
+    canceled, otherwise it is [Canceled].
+
+    @raise Terminated if [w] is terminated, even if [c] is canceled. *)
+val with_password_or_cancel
+  :  Await.t @ local
+  -> Await.Cancellation.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
+  -> 'a Await.Or_canceled.t @ unique
+
+(** [with_password_or_cancel_poisoning w c t f] is
+    [Completed (with_password_poisoning w t f)] if [c] is not canceled, otherwise it is
+    [Canceled].
+
+    Poisons [t] if [f] raises an exception.
+
+    @raise Terminated if [w] is terminated, even if [c] is canceled. *)
+val with_password_or_cancel_poisoning
+  :  Await.t @ local
+  -> Await.Cancellation.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
+  -> 'a Await.Or_canceled.t @ unique
+
+(** [with_key t ~f] locks [t] and runs [f], providing it a key for ['k] uniquely. If [t]
+    is locked, then [with_key] uses [w] to wait until it is unlocked.
+
+    @raise Poisoned if [t] cannot be acquired because it is poisoned.
+    @raise Terminated if [w] is terminated before the mutex is acquired. *)
+val with_key
+  :  Await.t @ local
+  -> 'k t
+  -> f:('k Capsule.Key.t @ unique -> 'a * 'k Capsule.Key.t @ once unique) @ local once
+  -> 'a @ once unique
+
+(** [with_key_poisoning t ~f] locks [t] and runs [f], providing it a key for ['k]
+    uniquely. If the function raises without returning the key back, the mutex is
+    poisoned. If [t] is locked, then [with_key_poisoning] uses [w] to wait until it is
+    unlocked.
+
+    @raise Poisoned if [t] cannot be acquired because it is poisoned.
+    @raise Terminated if [w] is terminated before the mutex is acquired. *)
+val with_key_poisoning
+  :  Await.t @ local
+  -> 'k t
+  -> f:('k Capsule.Key.t @ unique -> 'a * 'k Capsule.Key.t @ once unique) @ local once
+  -> 'a @ once unique
+
+(** [with_key_or_cancel w c t ~f] is [Completed (with_key w t ~f)] if [c] is not canceled,
+    otherwise it is [Canceled].
+
+    @raise Terminated if [w] is terminated, even if [c] is canceled. *)
+val with_key_or_cancel
+  :  Await.t @ local
+  -> Await.Cancellation.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Key.t @ unique -> 'a * 'k Capsule.Key.t @ once unique) @ local once
+  -> 'a Await.Or_canceled.t @ once unique
+
+(** [with_key_or_cancel_poisoning w c t ~f] is [Completed (with_key_poisoning w t ~f)] if
+    [c] is not canceled, otherwise it is [Canceled].
+
+    @raise Terminated if [w] is terminated, even if [c] is canceled. *)
+val with_key_or_cancel_poisoning
+  :  Await.t @ local
+  -> Await.Cancellation.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Key.t @ unique -> 'a * 'k Capsule.Key.t @ once unique) @ local once
+  -> 'a Await.Or_canceled.t @ once unique
+
+module Guard : sig
+  (** ['k Mutex.Guard.t] represents a locked mutex. It morally contains a
+      {!Capsule.Key.t}, but also has a finalizer that poisons the mutex if it is garbage
+      collected without {!release} being called. *)
+  type 'k t : value mod contended portable
+
+  (** [with_key t ~f] runs [f], providing it a key for ['k] uniquely. If the function
+      raises without returning the key back, the mutex is poisoned. *)
+  val with_key
+    :  'k t @ unique
+    -> f:('k Capsule.Key.t @ unique -> 'a * 'k Capsule.Key.t @ once unique) @ local once
+    -> 'a * 'k t @ once unique
+
+  (** [with_password g ~f] runs [f], providing it a password for ['k], and returns the
+      result of [f] together with the guard.
+
+      If [f] raises an exception, the mutex is poisoned, and the exception is reraised. *)
+  val with_password
+    :  'k t @ unique
+    -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
+    -> 'a * 'k t @ unique
+
+  (** [access g ~f] runs [f], providing it access to the capsule ['k], and returns the
+      result of [f] together with the guard.
+
+      If [f] raises an exception, the mutex is poisoned, and the exception is reraised. *)
+  val access
+    :  'k t @ unique
+    -> f:('k Capsule.Access.t -> 'a @ contended once portable unique)
+       @ local once portable
+    -> 'a * 'k t @ contended once portable unique
+
+  (** [release guard] releases the mutex protected by [guard], consuming the guard. *)
+  val release : 'k t @ unique -> unit
+
+  (** [poison guard] poisons the mutex protected by [guard], consuming the guard and
+      returning the key to the protected capsule. *)
+  val poison : 'k t @ unique -> 'k Capsule.Key.t @ unique
+
+  (** [is_poisoning guard] is [true] if [guard] will poison if its finalizer runs without
+      [release] being called. *)
+  val is_poisoning : 'k t -> bool
+end
+
+(** [acquire w t] acquires [t] and returns a guard for the locked mutex. If [t] is locked,
+    then acquire uses [w] to wait until it is unlocked.
+
+    @raise Poisoned if [t] cannot be acquired because it is poisoned.
+    @raise Terminated if [w] is terminated before the mutex is acquired. *)
+val acquire : Await.t @ local -> 'k t -> 'k Guard.t @ unique
+
+(** [acquire_or_cancel w c t] is [Completed (acquire w t)] if [c] is not canceled,
+    otherwise it is [Canceled]. *)
+val acquire_or_cancel
+  :  Await.t @ local
+  -> Await.Cancellation.t @ local
+  -> 'k t
+  -> 'k Guard.t Await.Or_canceled.t @ unique
+
+(** [release_temporarily w t k ~f] releases [t], runs [f] without the mutex, reacquires
+    [t] and returns the result of running [f] along with the [k].
+
+    To obtain a key to pass to [release_temporarily], use {!with_key} or similar
+    functions.
+
+    @raise Poisoned if [t] cannot be reacquired because it is poisoned.
+    @raise Terminated if [w] is terminated before the mutex is reacquired. *)
+val release_temporarily
+  :  Await.t @ local
+  -> 'k t @ local
+  -> 'k Capsule.Key.t @ unique
+  -> f:(unit -> 'a @ unique) @ local once
+  -> 'a * 'k Capsule.Key.t @ unique
+
+(** [release_temporarily_or_cancel w c t k ~f] is
+    [Completed (release_temporarily w t k ~f)] if [c] is not canceled, otherwise it is
+    [Canceled]. *)
+val release_temporarily_or_cancel
+  :  Await.t @ local
+  -> Await.Cancellation.t @ local
+  -> 'k t @ local
+  -> 'k Capsule.Key.t @ unique
+  -> f:(unit -> 'a @ unique) @ local once
+  -> ('a * 'k Capsule.Key.t) Await.Or_canceled.t @ unique
+
+(** [acquire_and_poison w t] acquires [t] and then immediately poisons it, returning the
+    key to the protected capsule.
+
+    @raise Poisoned if [t] cannot be acquired because it is poisoned.
+    @raise Terminated if [w] is terminated before the mutex is acquired. *)
+val acquire_and_poison : Await.t @ local -> 'k t @ local -> 'k Capsule.Key.t @ unique
+
+(** [acquire_and_poison_or_cancel w c t] is [Completed (acquire_and_poison w t)] if [c] is
+    not canceled, otherwise it is [Canceled]. *)
+val acquire_and_poison_or_cancel
+  :  Await.t @ local
+  -> Await.Cancellation.t @ local
+  -> 'k t @ local
+  -> 'k Capsule.Key.t Await.Or_canceled.t @ unique
+
+(** [poison_unacquired t] poisons [t] without acquiring it. Note that this can render the
+    capsule associated with [t] innaccessible, since it potentially destroys the
+    associated key. Does nothing if [t] is already poisoned. *)
+val poison_unacquired : 'k t -> unit
+
+(** [is_poisoned t] determines whether the mutex [t] is poisoned. *)
+val is_poisoned : 'k t @ local -> bool
+
+module For_testing : sig
+  (** [is_locked t] determines whether the mutex [t] is locked. *)
+  val is_locked : 'k t @ local -> bool
+
+  (** [length t] returns an upper bound on the length of the internal queue of awaiters
+      for testing purposes. *)
+  val length : 'k t @ local -> int
+end

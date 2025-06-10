@@ -1,6 +1,6 @@
 (library
  (name await_sync)
  (public_name await.sync)
- (libraries await backoff basement core portable)
+ (libraries await backoff basement portable)
  (preprocess
   (pps ppx_debug_assert ppx_jane)))
