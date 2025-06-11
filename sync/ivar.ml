@@ -68,7 +68,7 @@ type on_full =
   | Drop
   | Raise
 
-let fill_as (type a) ({ t } : a t) (v : a @@ portable) on_empty =
+let fill_as (type a) ({ t } : a t) (v : a @ portable) on_empty =
   let v = State.of_value v in
   let before = Awaitable.get t in
   let[@inline] try_empty t =
