@@ -1,6 +1,6 @@
 (library
  (name await_spinning)
  (public_name await.spinning)
- (libraries base await)
+ (libraries base await_kernel)
  (preprocess
   (pps ppx_jane)))

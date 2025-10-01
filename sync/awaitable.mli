@@ -4,7 +4,8 @@
     Awaitables can be used to implement all kinds of blocking data structures, including
     locks, condition variables, and blocking queues. *)
 
-open Portable
+open Portable_kernel
+open Await_kernel
 
 (** {1 Atomic API} *)
 
@@ -13,6 +14,10 @@ type !'a t : value mod contended portable
 
 (** [make v] creates a new awaitable atomic reference with the given initial value [v]. *)
 val make : 'a @ contended portable -> 'a t
+
+(** [make_alone v] creates a new awaitable atomic reference with the given initial value
+    [v], alone on a cache line to avoid false sharing. *)
+val make_alone : 'a @ contended portable -> 'a t
 
 (** [get t] gets the current value of the awaitable atomic reference. *)
 val get : 'a t @ local -> 'a @ contended portable
@@ -96,7 +101,7 @@ val await
     case [w] is terminated, and {!Canceled} in case [c] is canceled. *)
 val await_or_cancel
   :  Await.t @ local
-  -> Await.Cancellation.t @ local
+  -> Cancellation.t @ local
   -> 'a t @ local
   -> until_phys_unequal_to:'a @ contended portable
   -> [ `Signaled | `Terminated | `Canceled ] await
@@ -120,11 +125,12 @@ module Awaiter : sig
   (** [create_and_add t s ~until_phys_unequal_to:v] creates a single-use awaiter with the
       given trigger [t], adds the awaiter to the FIFO associated with the awaitable [t],
       and returns the awaiter. *)
-  val create_and_add
-    :  'a awaitable
-    -> Await.Trigger.Source.t
+  val%template create_and_add
+    :  'a awaitable @ l
+    -> Trigger.Source.t
     -> until_phys_unequal_to:'a @ contended portable
-    -> t
+    -> t @ l
+  [@@mode l = (global, local)]
 
   (** [cancel_and_remove a] signals the trigger of the awaiter [a] and cancels the awaiter
       such that it will not be selected by {!signal} or {!broadcast}, and removes the
@@ -139,7 +145,7 @@ module Awaiter : sig
       was neither terminated nor canceled, there is no need to explicitly
       [cancel_and_remove], because the awaiter [a] has already been used and removed from
       the awaitable . *)
-  val cancel_and_remove : t -> unit
+  val cancel_and_remove : t @ local -> unit
 end
 
 module For_testing : sig

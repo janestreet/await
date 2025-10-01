@@ -1,7 +1,7 @@
 open Base
-open Portable
-
-exception Poisoned
+open Basement
+open Await_kernel
+open Await_sync_intf
 
 module Acquired_or_would_block = struct
   type t =
@@ -124,12 +124,6 @@ end = struct
   let[@inline] has_uncontended_awaiters state = state land no_need_to_signal = 0
   let[@inline] value state = state asr one_shift
 
-  let%test_unit _ =
-    [%test_eq: int] 1 (value one);
-    [%test_pred: t] has_value_one_or_higher one;
-    [%test_pred: t] has_value_zero_or_higher one
-  ;;
-
   (* *)
 
   let[@inline] and_has_uncontended_awaiters state = state land lnot no_need_to_signal
@@ -141,7 +135,6 @@ end = struct
 
   let[@inline] from_value ~n = n * one |> and_has_no_uncontended_awaiters
   let poisoned = -poisoned_abs lor no_need_to_signal
-  let%test_unit "is_poisoned" = [%test_pred: t] is_poisoned poisoned
 end
 
 type t = State.t Awaitable.t
@@ -188,7 +181,7 @@ let release t =
 
 type ('a, _) result =
   | Value : ('a, 'a) result
-  | Or_canceled : ('a, 'a Await.Or_canceled.t) result
+  | Or_canceled : ('a, 'a Or_canceled.t) result
 
 let acquire_as (type r) w c t (r : (unit, r) result) : r =
   let[@inline] completed () : r =
@@ -236,7 +229,7 @@ let acquire_as (type r) w c t (r : (unit, r) result) : r =
             (match Awaitable.await_or_cancel w c t ~until_phys_unequal_to:after with
              | Signaled -> acquire_awaiting w c t Backoff.default (Awaitable.get t)
              | Terminated -> raise Await.Terminated
-             | Canceled -> Await.Or_canceled.Canceled))
+             | Canceled -> Or_canceled.Canceled))
         else (
           let backoff = Backoff.once backoff in
           acquire_awaiting w c t backoff (Awaitable.get t)))
@@ -259,7 +252,7 @@ let acquire_as (type r) w c t (r : (unit, r) result) : r =
     acquire_contended w c t Backoff.default (prior |> State.and_decr_value))
 ;;
 
-let acquire w t = acquire_as w Await.Cancellation.never t Value
+let acquire w t = acquire_as w Cancellation.never t Value
 let acquire_or_cancel w c t = acquire_as w c t Or_canceled
 
 let try_acquire t =
@@ -298,7 +291,7 @@ let get_value t =
 ;;
 
 let%template sexp_of_t t = [%sexp { value = (get_value t : int) }]
-[@@mode m = (global, local)]
+[@@alloc a = (heap, stack)]
 ;;
 
 let is_poisoned t = State.is_poisoned (Awaitable.get t)

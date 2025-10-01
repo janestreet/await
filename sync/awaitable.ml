@@ -1,6 +1,7 @@
 open Base
-open Portable
-open Await
+open Basement
+open Portable_kernel
+open Await_kernel
 
 module Queue : sig @@ portable
   type 'a t : immutable_data with 'a
@@ -72,30 +73,63 @@ type 'a awaiter =
   }
 
 type 'a awaitable =
-  { value : 'a Atomic.t
-  ; queue : 'a awaiter Queue.t Atomic.t
+  { mutable value : 'a portended [@atomic]
+  ; mutable queue : 'a awaiter Queue.t [@atomic]
   }
 
-type 'a t = 'a awaitable
+type 'a t = 'a awaitable contended
 
-let make value = { value = Atomic.make value; queue = Atomic.make Queue.empty }
-let[@inline] get t = Atomic.get t.value
+let make value = { contended = { value = { portended = value }; queue = Queue.empty } }
+
+let make_alone value =
+  { contended =
+      Portable_common.Padding.copy_as_padded
+        { value = { portended = value }; queue = Queue.empty }
+  }
+;;
+
+let[@inline] get t = (Atomic.Loc.get [%atomic.loc t.contended.value]).portended
 
 let[@inline] compare_and_set t ~if_phys_equal_to ~replace_with =
-  Atomic.compare_and_set t.value ~if_phys_equal_to ~replace_with
+  Atomic.Loc.compare_and_set
+    [%atomic.loc t.contended.value]
+    ~if_phys_equal_to:{ portended = if_phys_equal_to }
+    ~replace_with:{ portended = replace_with }
 ;;
 
 module Compare_failed_or_set_here = Atomic.Compare_failed_or_set_here
 
 let[@inline] compare_exchange t ~if_phys_equal_to ~replace_with =
-  Atomic.compare_exchange t.value ~if_phys_equal_to ~replace_with
+  (Atomic.Loc.compare_exchange
+     [%atomic.loc t.contended.value]
+     ~if_phys_equal_to:{ portended = if_phys_equal_to }
+     ~replace_with:{ portended = replace_with })
+    .portended
 ;;
 
-let[@inline] exchange t value = Atomic.exchange t.value value
-let[@inline] fetch_and_add t n = Atomic.fetch_and_add t.value n
-let[@inline] set t value = Atomic.set t.value value
-let[@inline] incr t = Atomic.incr t.value
-let[@inline] decr t = Atomic.decr t.value
+let[@inline] exchange t value =
+  (Atomic.Loc.exchange [%atomic.loc t.contended.value] { portended = value }).portended
+;;
+
+(* This is safe because [portended] is [[@@unboxed]], meaning [int] and [int portended]
+   have the same runtime representation. *)
+external fetch_and_add_portended_loc
+  :  (int portended Atomic.Loc.t[@local_opt]) @ contended
+  -> int
+  -> int
+  @@ portable
+  = "%atomic_fetch_add_loc"
+
+let[@inline] fetch_and_add t n =
+  fetch_and_add_portended_loc [%atomic.loc t.contended.value] n
+;;
+
+let[@inline] set t value =
+  Atomic.Loc.set [%atomic.loc t.contended.value] { portended = value }
+;;
+
+let[@inline] incr t = ignore (fetch_and_add t 1 : int)
+let[@inline] decr t = ignore (fetch_and_add t (-1) : int)
 
 type _ await =
   | Signaled : [> `Signaled ] await
@@ -103,20 +137,23 @@ type _ await =
   | Canceled : [> `Canceled ] await
 
 let add t awaiter =
-  Atomic.update t.queue ~pure_f:(fun queue -> Queue.add awaiter queue) [@nontail]
+  Atomic.Loc.update [%atomic.loc t.contended.queue] ~pure_f:(fun queue ->
+    Queue.add awaiter queue)
+  [@nontail]
 ;;
 
-let remove_signalled t =
-  Atomic.update t.queue ~pure_f:(fun queue ->
+let remove_signalled (t @ local) =
+  Atomic.Loc.update [%atomic.loc t.contended.queue] ~pure_f:(fun queue ->
     Queue.filter
       ~f:(fun awaiter -> not (Trigger.Source.is_signalled awaiter.trigger))
       queue)
+  [@nontail]
 ;;
 
 let resume t all_or_first =
   let rec loop backoff =
-    let value = Atomic.get t.value in
-    let before = Atomic.get t.queue in
+    let value = (Atomic.Loc.get [%atomic.loc t.contended.value]).portended in
+    let before = Atomic.Loc.get [%atomic.loc t.contended.queue] in
     let after, to_signal =
       Queue.split all_or_first before ~f:(fun awaiter ->
         if Trigger.Source.is_signalled awaiter.trigger
@@ -125,7 +162,12 @@ let resume t all_or_first =
         then Keep
         else Return)
     in
-    match Atomic.compare_and_set t.queue ~if_phys_equal_to:before ~replace_with:after with
+    match
+      Atomic.Loc.compare_and_set
+        [%atomic.loc t.contended.queue]
+        ~if_phys_equal_to:before
+        ~replace_with:after
+    with
     | Set_here ->
       List.iter ~f:(fun awaiter -> Trigger.Source.signal awaiter.trigger) to_signal
     | Compare_failed -> loop (Backoff.once backoff)
@@ -154,8 +196,8 @@ let await_or_cancel_as w cancellation t comparand on_canceled =
       signal t;
       result
     in
-    await_until_terminated_or_canceled w cancellation trigger;
-    if is_terminated w
+    Await.await_until_terminated_or_canceled w cancellation trigger;
+    if Await.is_terminated w
     then forward t Terminated
     else if Cancellation.is_canceled cancellation
     then forward t on_canceled
@@ -175,15 +217,21 @@ let await_or_cancel w c t ~until_phys_unequal_to:comparand =
 ;;
 
 module Awaiter = struct
-  type t = T : 'a awaitable * 'a awaiter -> t
+  type t =
+    | T :
+        { awaitable : 'a awaitable contended
+        ; awaiter : 'a awaiter @@ global
+        }
+        -> t
 
-  let create_and_add t trigger ~until_phys_unequal_to:comparand =
+  let%template create_and_add t trigger ~until_phys_unequal_to:comparand =
     let awaiter = { comparand; trigger } in
     add t awaiter;
-    T (t, awaiter)
+    T { awaitable = t; awaiter } [@exclave_if_local l]
+  [@@mode l = (global, local)]
   ;;
 
-  let cancel_and_remove (T (t, awaiter)) =
+  let cancel_and_remove (T { awaitable = t; awaiter }) =
     Trigger.Source.signal awaiter.trigger;
     remove_signalled t;
     signal t
@@ -191,5 +239,5 @@ module Awaiter = struct
 end
 
 module For_testing = struct
-  let length t = Queue.length (Atomic.get t.queue)
+  let length t = Queue.length (Atomic.Loc.get [%atomic.loc t.contended.queue])
 end

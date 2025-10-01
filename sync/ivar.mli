@@ -1,5 +1,7 @@
 @@ portable
 
+open Await_kernel
+
 (** A write-once cell that can be empty or full (i.e., hold a single value). *)
 
 type !'a t : value mod contended portable
@@ -10,10 +12,9 @@ val create : unit -> 'a t
 (** [create_full v] returns an ivar filled with [v]. *)
 val create_full : 'a @ contended portable -> 'a t
 
-(** Raised by [fill_exn] in case the ivar was already full. *)
-exception Full
+(** [fill_exn t v] fills [t] with value [v] if [t] was empty.
 
-(** [fill_exn t v] fills [t] with value [v] if [t] was empty. Otherwise raises {!Full}. *)
+    @raise Already_full in case [t] was already full. *)
 val fill_exn : 'a t @ local -> 'a @ contended portable -> unit
 
 (** [fill_if_empty t v] fills [t] with value [v] if [t] was empty. Otherwise does nothing. *)
@@ -31,9 +32,9 @@ val read : Await.t @ local -> 'a t @ local -> 'a @ contended portable
     @raise Terminated in case [w] was terminated, even if [c] was canceled. *)
 val read_or_cancel
   :  Await.t @ local
-  -> Await.Cancellation.t @ local
+  -> Cancellation.t @ local
   -> 'a t @ local
-  -> 'a Await.Or_canceled.t @ contended
+  -> 'a Or_canceled.t @ contended
 
 (** [peek t] returns [This v] iff [t] is full with value [v], or [Null] if [t] is not
     full. *)

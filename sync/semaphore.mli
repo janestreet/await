@@ -1,5 +1,7 @@
 @@ portable
 
+open Await_kernel
+
 module Acquired_or_would_block : sig
   (** The return value of {!try_acquire} *)
   type t =
@@ -11,7 +13,7 @@ end
 (** A poisonable counting semaphore. *)
 
 (** Represents a poisonable counting semaphore. *)
-type t : value mod contended portable [@@deriving sexp_of ~localize]
+type t : value mod contended portable [@@deriving sexp_of ~stackify]
 
 (** Maximum counter value allowed by the semaphore implementation. *)
 val max_value : int
@@ -28,9 +30,6 @@ val create : int -> t
     @raise Sys_error in case the count would overflow. *)
 val release : t @ local -> unit
 
-(** Exception raised in case the semaphore has been {{!poison} poisoned}. *)
-exception Poisoned
-
 (** [acquire w t] waits until the count of the semaphore is greater than [0] and then
     atomically decrements the count.
 
@@ -41,9 +40,9 @@ val acquire : Await.t @ local -> t @ local -> unit
     otherwise it is [Canceled]. *)
 val acquire_or_cancel
   :  Await.t @ local
-  -> Await.Cancellation.t @ local
+  -> Cancellation.t @ local
   -> t @ local
-  -> unit Await.Or_canceled.t
+  -> unit Or_canceled.t
 
 (** [try_acquire t] attempts to atomically and in a wait-free way decrement the count of
     the semaphore, unless the count is already [0]. Returns {!Acquired} if the semaphore

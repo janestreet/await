@@ -14,25 +14,28 @@ depends: [
   "async"
   "base"
   "basement"
+  "concurrent"
   "core"
   "core_kernel"
   "core_unix"
   "expect_test_helpers_core"
   "oxcaml_effect"
+  "parallel"
   "portable"
   "ppx_debug_assert"
+  "ppx_fuelproof"
   "ppx_jane"
+  "ppx_quick_test"
   "ppx_sexp_conv"
-  "stdio"
-  "unique"
-  "uopt"
-  "backoff"                  {= "0.1.1+ox"}
+  "ppx_sexp_value"
+  "ppx_shorthand"
+  "ppx_template"
+  "ppx_with"
   "base-threads"
   "dune"                     {>= "3.17.0"}
 ]
 available: arch != "arm32" & arch != "x86_32"
-synopsis: "Low-level support for suspending and resuming fibers in OxCaml"
+synopsis: "Implementations of awaiting and synchronization primitives for OxCaml"
 description: "
-[Await] is a library that provides low-level support for suspending
-and resuming fibers with support for propagation of cancelation and termination.
+[Await] provides implementations of awaiting and synchronization primitives for OxCaml.
 "

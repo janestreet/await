@@ -1,0 +1,29 @@
+open Base
+
+type%template ('a : k) t =
+  | Canceled
+  | Completed of 'a
+[@@kind k = (value_or_null, void, value_or_null & void)]
+[@@deriving
+  compare ~localize, equal ~localize, globalize, sexp ~stackify, sexp_grammar, hash]
+
+let%template[@inline] completed_exn : (_ t[@kind k]) -> _ = function
+  | Completed a -> a
+  | Canceled ->
+    (match failwith "[Await.Or_canceled.completed_exn]: Canceled" with
+     | (_ : Nothing.t) -> .)
+[@@kind k = (value_or_null, void, value_or_null & void)]
+;;
+
+include Monad.Make [@mode local] [@modality portable] (struct
+    type nonrec 'a t = 'a t
+
+    let[@inline] return a = Completed a
+    let map = `Define_using_bind
+
+    let[@inline] bind t ~f =
+      match t with
+      | Canceled -> Canceled
+      | Completed a -> f a
+    ;;
+  end)

@@ -1,6 +1,6 @@
 (library
  (name await_blocking)
  (public_name await.blocking)
- (libraries await base)
+ (libraries await_kernel base basement)
  (preprocess
-  (pps ppx_jane)))
+  (pps ppx_jane ppx_fuelproof)))

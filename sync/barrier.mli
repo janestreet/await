@@ -1,5 +1,7 @@
 @@ portable
 
+open Await_kernel
+
 (** A poisonable barrier.
 
     To use a barrier, one first {!create}s a barrier by specifying the number of
@@ -42,9 +44,6 @@ val create : int -> t
 (** [parties t] returns the number of parties the barrier was {{!create} created} with. *)
 val parties : t @ local -> int
 
-(** Exception raised by {!await} in case the barrier has become poisoned. *)
-exception Poisoned
-
 (** [await w t] awaits until the configured number of {!parties} are awaiting on the
     barrier and returns. After returning normally the barrier will be reset such that
     [await] can be called on the barrier again.
@@ -65,9 +64,9 @@ val await : Await.t @ local -> t @ local -> unit
     @raise Terminated if [w] is terminated, even if [c] is canceled. *)
 val await_or_cancel
   :  Await.t @ local
-  -> Await.Cancellation.t @ local
+  -> Cancellation.t @ local
   -> t @ local
-  -> unit Await.Or_canceled.t
+  -> unit Or_canceled.t
 
 (** [poison t] marks the barrier as poisoned. Concurrent and subsequent calls of {!await}
     will raise the {!Poisoned} exception. *)

@@ -1,53 +1,60 @@
 open Base
-open Await
+open Await_kernel
+open Basement
+open Blocking_sync [@@alert "-deprecated"]
 
 module Context = struct
-  type t =
-    { mutex : Stdlib.Mutex.t Portable_lazy.t @@ global
-    ; condition : Stdlib.Condition.t Portable_lazy.t @@ global
-    }
+  (* We allocate [mutex] and [condition] lazily to make [with_await] as low overhead as
+     possible. Sometimes they are not needed as nothing actually needs to block. *)
+    type%fuelproof inner : value mod contended portable =
+      | T :
+          { mutex : 'k Mutex.t
+          ; condition : 'k Condition.t
+          }
+          -> inner
 
-  let create () =
-    { mutex = Portable_lazy.from_fun (fun () -> Stdlib.Mutex.create ())
-    ; condition = Portable_lazy.from_fun (fun () -> Stdlib.Condition.create ())
-    }
-  ;;
+  type t = { mutable inner : inner or_null }
+
+  let create () = exclave_ { inner = Null }
 end
 
-let wakeup mutex condition =
-  let thunk () =
-    (match Stdlib.Mutex.lock mutex with
-     | () -> Stdlib.Mutex.unlock mutex
-     | exception Sys_error _ -> ());
-    Stdlib.Condition.broadcast condition
-  in
-  thunk
+type t = { context : Context.inner @@ aliased global many } [@@unboxed]
+
+let wakeup { context = T { mutex; condition } } =
+  (try Mutex.with_lock mutex ~f:(fun _ -> ()) with
+   | Mutex.Poisoned | Sys_error _ -> ());
+  Condition.broadcast condition
 ;;
 
-let await context trigger =
-  let mutex = Portable_lazy.force context.Context.mutex in
-  let condition = Portable_lazy.force context.Context.condition in
-  if Trigger.on_signal trigger (wakeup mutex condition)
-  then (
-    (* NOTE: This doesn't use [Stdlib.Mutex.protect] only to avoid a heap allocation for
-       the closure. *)
-    Stdlib.Mutex.lock mutex;
-    match
-      while not (Trigger.is_signalled trigger) do
-        Stdlib.Condition.wait condition mutex
-      done
-    with
-    | () -> Stdlib.Mutex.unlock mutex
-    | exception exn ->
-      let bt = Backtrace.Exn.most_recent () in
-      Stdlib.Mutex.unlock mutex;
-      Exn.raise_with_original_backtrace exn bt)
+let await (context : Context.t) trigger =
+  let context =
+    match context.inner with
+    | Null ->
+      let (P key) = Capsule.create () in
+      let mutex = Mutex.create key in
+      let condition = Condition.create () in
+      let inner = Context.T { mutex; condition } in
+      context.inner <- This inner;
+      inner
+    | This inner -> inner
+  in
+  let (T { mutex; condition }) = context in
+  match Trigger.on_signal trigger ~f:wakeup { context } with
+  | Null ->
+    let rec wait key =
+      if Trigger.is_signalled trigger
+      then #((), key)
+      else (
+        let key = Condition.wait condition ~mutex key in
+        wait key)
+    in
+    Mutex.with_key mutex ~f:wait [@nontail]
+  | This _ -> ()
 ;;
+
+let yield _ = yield ()
 
 let with_await terminator ~f =
-  (* We allocate [mutex] and [condition] lazily to make [run_with_await] as low overhead
-     as possible. Sometimes they are not needed as nothing actually needs to block. *)
   let context = Context.create () in
-  let await = Await.create terminator ~await context in
-  f await [@nontail]
+  Await.with_ ~terminator ~await ~yield:(This yield) context ~f [@nontail]
 ;;

@@ -1,4 +1,6 @@
 open Base
+open Await_kernel
+open Await_sync_intf
 
 module State : sig @@ portable
   type t : immediate
@@ -133,8 +135,6 @@ let create parties =
   else invalid_arg "Barrier.create: invalid number of parties"
 ;;
 
-exception Poisoned
-
 let[@inline never] rec poison t =
   let before = Awaitable.get t in
   let after = before |> State.and_poison in
@@ -147,7 +147,7 @@ let[@inline never] rec poison t =
 
 type ('a, _) result =
   | Value : ('a, 'a) result
-  | Canceled : ('a, 'a Await.Or_canceled.t) result
+  | Canceled : ('a, 'a Or_canceled.t) result
 
 let await_as (type r) ~awt ~ct t (r : (unit, r) result) : r =
   let[@inline] completed () : r =
@@ -243,6 +243,6 @@ let await_as (type r) ~awt ~ct t (r : (unit, r) result) : r =
     raise Poisoned)
 ;;
 
-let await awt t = await_as ~awt ~ct:Await.Cancellation.never t Value
+let await awt t = await_as ~awt ~ct:Cancellation.never t Value
 let await_or_cancel awt ct t = await_as ~awt ~ct t Canceled
 let parties t = State.parties (Awaitable.get t)

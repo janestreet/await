@@ -18,63 +18,62 @@ let require_in_range
 ;;
 
 let%expect_test "Cancellation basics" =
-  Cancellation.with_ (fun parent ->
+  let%with.stack parent = Cancellation.with_ in
+  let called = Atomic.make 0 in
+  let trigger = Trigger.create_with_action ~f:(fun _ -> Atomic.incr called) () in
+  require_equal
+    (module Cancellation.Link)
+    Attached
+    (Cancellation.add_trigger parent (Trigger.source trigger));
+  Cancellation.with_linked parent (fun child ->
     let called = Atomic.make 0 in
-    let trigger = Trigger.create_with_action (fun _ -> Atomic.incr called) in
+    let trigger = Trigger.create_with_action ~f:(fun _ -> Atomic.incr called) () in
     require_equal
       (module Cancellation.Link)
       Attached
-      (Cancellation.add_trigger parent (Trigger.source trigger));
-    Cancellation.with_linked parent (fun child ->
-      let called = Atomic.make 0 in
-      let trigger = Trigger.create_with_action (fun _ -> Atomic.incr called) in
-      require_equal
-        (module Cancellation.Link)
-        Attached
-        (Cancellation.add_trigger child (Trigger.source trigger));
-      Option.iter ~f:Cancellation.Source.cancel (Cancellation.source child);
-      require_equal (module Int) 1 (Atomic.get called));
-    require (not (Cancellation.is_canceled parent));
-    require_equal (module Int) 0 (Atomic.get called);
-    Cancellation.with_linked parent (fun child ->
-      let called = Atomic.make 0 in
-      let trigger = Trigger.create_with_action (fun _ -> Atomic.incr called) in
-      require_equal
-        (module Cancellation.Link)
-        Attached
-        (Cancellation.add_trigger child (Trigger.source trigger));
-      Option.iter ~f:Cancellation.Source.cancel (Cancellation.source parent);
-      require_equal (module Int) 1 (Atomic.get called));
-    require (Cancellation.is_canceled parent);
-    require_equal (module Int) 1 (Atomic.get called))
+      (Cancellation.add_trigger child (Trigger.source trigger));
+    Or_null.iter ~f:Cancellation.Source.cancel (Cancellation.source child);
+    require_equal (module Int) 1 (Atomic.get called));
+  require (not (Cancellation.is_canceled parent));
+  require_equal (module Int) 0 (Atomic.get called);
+  Cancellation.with_linked parent (fun child ->
+    let called = Atomic.make 0 in
+    let trigger = Trigger.create_with_action ~f:(fun _ -> Atomic.incr called) () in
+    require_equal
+      (module Cancellation.Link)
+      Attached
+      (Cancellation.add_trigger child (Trigger.source trigger));
+    Or_null.iter ~f:Cancellation.Source.cancel (Cancellation.source parent);
+    require_equal (module Int) 1 (Atomic.get called));
+  require (Cancellation.is_canceled parent);
+  require_equal (module Int) 1 (Atomic.get called)
 ;;
 
 let%expect_test "Cancellation internal cleanup" =
-  Cancellation.with_ (fun t ->
-    for n = 1 to 5 do
-      let triggers = Array.init n ~f:(fun _ -> Trigger.source (Trigger.create ())) in
-      for i = 0 to n * 4 do
-        require_in_range
-          (module Int)
-          (Cancellation.For_testing.get_countdown t)
-          ~at_least:0
-          ~at_most:n;
-        Trigger.Source.signal triggers.(i % n);
-        triggers.(i % n) <- Trigger.source (Trigger.create ());
-        require_equal
-          (module Cancellation.Link)
-          Attached
-          (Cancellation.add_trigger t triggers.(i % n));
-        require_in_range
-          (module Int)
-          (Cancellation.For_testing.get_countdown t)
-          ~at_least:0
-          ~at_most:n;
-        ()
-      done;
-      for i = 0 to n - 1 do
-        Trigger.Source.signal triggers.(i)
-      done
+  let%with.stack t = Cancellation.with_ in
+  for n = 1 to 5 do
+    let triggers = Array.init n ~f:(fun _ -> Trigger.source (Trigger.create ())) in
+    for i = 0 to n * 4 do
+      require_in_range
+        (module Int)
+        (Cancellation.For_testing.get_countdown t)
+        ~at_least:0
+        ~at_most:n;
+      Trigger.Source.signal triggers.(i % n);
+      triggers.(i % n) <- Trigger.source (Trigger.create ());
+      require_equal
+        (module Cancellation.Link)
+        Attached
+        (Cancellation.add_trigger t triggers.(i % n));
+      require_in_range
+        (module Int)
+        (Cancellation.For_testing.get_countdown t)
+        ~at_least:0
+        ~at_most:n;
+      ()
     done;
-    ())
+    for i = 0 to n - 1 do
+      Trigger.Source.signal triggers.(i)
+    done
+  done
 ;;

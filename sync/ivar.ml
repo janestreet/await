@@ -1,4 +1,6 @@
 open Base
+open Await_kernel
+open Await_sync_intf
 
 (* The underlying state machine of an ivar:
 
@@ -34,26 +36,20 @@ module State : sig @@ portable
 end = struct
   type +'a t : immutable_data with 'a @@ contended portable
 
-  external magic_contended_to_portable
-    :  'a @ contended
-    -> 'b @ portable
-    @@ portable
-    = "%obj_magic"
-
-  let empty = magic_contended_to_portable (ref 0)
-  let awaiters = magic_contended_to_portable (ref 1)
-  let[@inline] of_value x = magic_contended_to_portable x
+  let empty = (Obj.magic [@mode contended portable]) (ref 0)
+  let awaiters = (Obj.magic [@mode contended portable]) (ref 1)
+  let[@inline] of_value x = (Obj.magic [@mode contended portable]) x
   let[@inline] is_empty (x @ local) = phys_equal empty x
   let[@inline] is_awaiters (x @ local) = phys_equal awaiters x
   let[@inline] is_value x = not (is_empty x || is_awaiters x)
 
   let[@inline] value_opt x =
-    if is_value x then This (magic_contended_to_portable x) else Null
+    if is_value x then This ((Obj.magic [@mode contended portable]) x) else Null
   ;;
 
   let[@inline] value_unsafe x =
     assert%debug (is_value x);
-    magic_contended_to_portable x
+    (Obj.magic [@mode contended portable]) x
   ;;
 end
 
@@ -61,8 +57,6 @@ type 'a t = { t : 'a State.t Awaitable.t } [@@unboxed]
 
 let create () = { t = Awaitable.make State.empty }
 let create_full v = { t = Awaitable.make (State.of_value v) }
-
-exception Full
 
 type on_full =
   | Drop
@@ -86,7 +80,7 @@ let fill_as (type a) ({ t } : a t) (v : a @ portable) on_empty =
     | Compare_failed ->
       (match on_empty with
        | Drop -> ()
-       | Raise -> raise Full)
+       | Raise -> raise Already_full)
   in
   if not (try_empty t) then try_awaiters t
 ;;
@@ -96,7 +90,7 @@ let fill_exn t v = fill_as t v Raise
 
 type ('a, _) result =
   | Value : ('a, 'a) result
-  | Or_canceled : ('a, 'a Await.Or_canceled.t) result
+  | Or_canceled : ('a, 'a Or_canceled.t) result
 
 let read_as (type a r) w c ({ t } : a t) (r : (a, r) result) : r =
   let value_or_empty_or_awaiters = Awaitable.get t in
@@ -126,11 +120,9 @@ let read_as (type a r) w c ({ t } : a t) (r : (a, r) result) : r =
     | Or_canceled ->
       (match Awaitable.await_or_cancel w c t ~until_phys_unequal_to:State.awaiters with
        | Signaled ->
-         Completed
-           ((* [Awaitable.await] will not return [Signaled] unless the state has been changed
+         (* [Awaitable.await] will not return [Signaled] unless the state has been changed
             and the only state change from [awaiters] is to a value. *)
-            State.value_unsafe
-              (Awaitable.get t))
+         Completed (State.value_unsafe (Awaitable.get t))
        | Canceled -> Canceled
        | Terminated -> raise Await.Terminated))
   else (
@@ -140,7 +132,7 @@ let read_as (type a r) w c ({ t } : a t) (r : (a, r) result) : r =
     | Or_canceled -> Completed (State.value_unsafe value_or_awaiters))
 ;;
 
-let read w t = read_as w Await.Cancellation.never t Value
+let read w t = read_as w Cancellation.never t Value
 let read_or_cancel w c t = read_as w c t Or_canceled
 
 let peek { t } =

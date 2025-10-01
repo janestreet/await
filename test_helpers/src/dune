@@ -1,7 +1,0 @@
-(library
- (name await_test_helpers)
- (public_name await.test_helpers)
- (libraries await await_atomic_bitset await_blocking base
-   core_kernel.caml_threads portable uopt)
- (preprocess
-  (pps ppx_debug_assert ppx_jane)))

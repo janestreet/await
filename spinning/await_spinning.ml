@@ -1,11 +1,10 @@
-open! Base
+open Await_kernel
 
 let with_await terminator ~f =
   let await () trigger =
-    while not (Await.Trigger.is_signalled trigger) do
-      Domain.cpu_relax ()
+    while not (Trigger.is_signalled trigger) do
+      Basement.Stdlib_shim.Domain.cpu_relax ()
     done
   in
-  let await = Await.create terminator ~await () in
-  f await [@nontail]
+  Await.with_ ~terminator ~await ~f ~yield:Null () [@nontail]
 ;;

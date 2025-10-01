@@ -1,8 +1,11 @@
+module Effect_ = Effect
+open Core
+module Effect = Effect_
 open Async
-open Await
+open Await_kernel
 open Portable
 
-type 'a op = Await : Trigger.t -> unit op
+type 'a op = Await : Trigger.t -> unit op [@@unboxed]
 
 module Eff = struct
   include Effect.Make (struct
@@ -12,25 +15,38 @@ module Eff = struct
   let rec handle = function
     | Value value -> value
     | Exception e -> raise e
-    | Operation (Await trigger, k) ->
-      let open struct
-        external magic_unique : 'a -> 'a @ unique @@ portable = "%identity"
-      end in
-      let continue _ = handle (Effect.continue (magic_unique k) () []) in
-      let continue_capsule = Capsule.Initial.Data.wrap continue in
-      let context = Scheduler.current_execution_context () in
-      let context_capsule = Capsule.Initial.Data.wrap context in
-      if not
-           (Trigger.on_signal trigger (fun () ->
-              Async_kernel_scheduler.portable_enqueue_job context_capsule continue_capsule))
-      then handle (Effect.continue (magic_unique k) () [])
+    | Operation (op, k) -> await op k
+
+  and await : type t. t op -> (t, _, _) Effect.Continuation.t @ unique -> _ =
+    fun (Await trigger) k ->
+    let k = Capsule.Expert.(Data.wrap_unique ~access:(Access.unbox initial)) k in
+    let continue = Capsule.Initial.Data.wrap continue in
+    let context = Capsule.Initial.Data.wrap (Scheduler.current_execution_context ()) in
+    match
+      Trigger.on_signal trigger k ~f:(fun k ->
+        Async_kernel_scheduler.portable_enqueue_job context continue k)
+    with
+    | Null -> ()
+    | This k ->
+      let k = Capsule.Expert.(Data.unwrap_unique ~access:(Access.unbox initial)) k in
+      handle (Effect.continue k () [])
+
+  and continue : #(_ * (unit, _, _) Effect.Continuation.t) @ unique -> _ =
+    fun #(_, k) -> handle (Effect.continue k () [])
   ;;
 end
 
 let await handler trigger =
   Eff.perform
-    (Capsule.Expert.Data.Local.unwrap ~access:Capsule.Expert.initial handler)
+    ((Capsule.Initial.Data.unwrap [@mode local]) handler)
     (Await trigger) [@nontail]
+;;
+
+let yield handler =
+  let trigger = Trigger.create () in
+  Deferred.upon (Async_kernel_scheduler.yield ()) (fun () ->
+    Trigger.Source.signal (Trigger.source trigger));
+  await handler trigger
 ;;
 
 module Expert = struct
@@ -39,25 +55,24 @@ module Expert = struct
     Eff.handle
       ((Eff.run [@alert "-experimental"]) (fun handler ->
          let handler = (Capsule.Initial.Data.wrap [@mode local]) handler in
-         let await = Await.create terminator ~await handler in
-         f await [@nontail]))
+         Await.with_ ~terminator ~await ~yield:(This yield) handler ~f [@nontail]))
+  ;;
+
+  let with_yield ~f =
+    with_await Terminator.never ~f:(fun await -> f (Yield.of_await await) [@nontail])
+    [@nontail]
   ;;
 
   let thread_safe_spawn context action =
-    let action = Unique.Once.make action in
-    Async_kernel_scheduler.thread_safe_enqueue_job
-      context
-      (fun () -> (Unique.Once.get_exn action) ())
-      ()
+    Async_kernel_scheduler.thread_safe_enqueue_job context action ()
   ;;
 end
 
 let schedule_with_await ?monitor ?priority terminator ~f =
-  let f = Unique.Once.make f in
   Deferred.create (fun ivar ->
     schedule ?monitor ?priority (fun () ->
       Expert.with_await terminator ~f:(fun w ->
-        match (Unique.Once.get_exn f) w with
+        match f w with
         | value -> Ivar.fill_exn ivar value
         | exception exn -> Monitor.send_exn (Monitor.current ()) exn)
       [@nontail]))
@@ -69,8 +84,8 @@ let await_deferred t deferred =
   else (
     let trigger = Trigger.create () in
     Deferred.upon deferred (fun _value -> Trigger.Source.signal (Trigger.source trigger));
-    await_until_terminated t trigger;
+    Await.await_until_terminated t trigger;
     if Deferred.is_determined deferred
     then Deferred.value_exn deferred
-    else raise Terminated)
+    else raise Await.Terminated)
 ;;

@@ -1,5 +1,5 @@
-module Cancellation = Cancellation
-module Or_canceled = Or_canceled
-module Terminator = Terminator
-module Trigger = Trigger
-include Export
+include Await_kernel (** @inline *)
+
+include Await_sync (** @inline *)
+
+module Capsule = Await_capsule
