@@ -1,7 +1,0 @@
-(library
- (name await_bench)
- (public_name await.bench)
- (libraries await await_blocking base concurrent concurrent.in_thread
-   portable threads)
- (preprocess
-  (pps ppx_jane ppx_with)))

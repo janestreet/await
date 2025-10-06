@@ -14,7 +14,6 @@ depends: [
   "async"
   "base"
   "basement"
-  "concurrent"
   "core"
   "oxcaml_effect"
   "portable"
@@ -25,8 +24,6 @@ depends: [
   "ppx_sexp_value"
   "ppx_shorthand"
   "ppx_template"
-  "ppx_with"
-  "base-threads"
   "dune"             {>= "3.17.0"}
 ]
 available: arch != "arm32" & arch != "x86_32"
