@@ -13,6 +13,14 @@ module Context = struct
           }
           -> inner
 
+  let create_inner () =
+    let (P key) = Capsule.create () in
+    let mutex = Mutex.create key in
+    let condition = Condition.create () in
+    let inner = T { mutex; condition } in
+    inner
+  ;;
+
   type t = { mutable inner : inner or_null }
 
   let create () = exclave_ { inner = Null }
@@ -26,14 +34,15 @@ let wakeup { context = T { mutex; condition } } =
   Condition.broadcast condition
 ;;
 
+module TLS = Stdlib_shim.Domain.Safe.TLS
+
+let inner_key = TLS.new_key Context.create_inner
+
 let await (context : Context.t) trigger =
   let context =
     match context.inner with
     | Null ->
-      let (P key) = Capsule.create () in
-      let mutex = Mutex.create key in
-      let condition = Condition.create () in
-      let inner = Context.T { mutex; condition } in
+      let inner = TLS.get inner_key in
       context.inner <- This inner;
       inner
     | This inner -> inner

@@ -18,7 +18,7 @@ open! Portable_kernel
 type state =
   | Initial
   | Awaiting :
-      { action : 'k @ portable unique -> unit @@ portable
+      { action : 'k @ contended portable unique -> unit @@ portable
       ; k : 'k @@ portable
       }
       -> state
@@ -45,9 +45,7 @@ module Source = struct
          Atomic.compare_and_set t ~if_phys_equal_to:current ~replace_with:Signaled
        with
        | Set_here ->
-         current_r.action
-           ((Obj.magic_unique [@mode portable])
-              ((Obj.magic_uncontended [@mode portable]) current_r.k))
+         current_r.action ((Obj.magic_unique [@mode contended portable]) current_r.k)
        | Compare_failed -> ())
     | Initial as current ->
       (match
@@ -59,21 +57,31 @@ module Source = struct
             Atomic.compare_and_set t ~if_phys_equal_to:current ~replace_with:Signaled
           with
           | Set_here ->
-            current_r.action
-              ((Obj.magic_unique [@mode portable])
-                 ((Obj.magic_uncontended [@mode portable]) current_r.k))
+            current_r.action ((Obj.magic_unique [@mode contended portable]) current_r.k)
           | Compare_failed -> ()))
   ;;
 
   let is_signalled = is_signalled
+
+  module For_testing = struct
+    let signal_if_awaiting t =
+      match Atomic.get t with
+      | Signaled | Initial -> ()
+      | Awaiting current_r as current ->
+        (match
+           Atomic.compare_and_set t ~if_phys_equal_to:current ~replace_with:Signaled
+         with
+         | Set_here ->
+           current_r.action ((Obj.magic_unique [@mode contended portable]) current_r.k)
+         | Compare_failed -> ())
+    ;;
+  end
 end
 
 let on_signal t ~f:action k =
-  let k = (Obj.magic_many [@mode portable]) k in
+  let k = (Obj.magic_many [@mode contended portable]) k in
   match Atomic.get t with
-  | Signaled ->
-    This
-      ((Obj.magic_unique [@mode portable]) ((Obj.magic_uncontended [@mode portable]) k))
+  | Signaled -> This ((Obj.magic_unique [@mode contended portable]) k)
   | Awaiting _ -> failwith "Trigger.on_signal: already awaiting"
   | Initial as if_phys_equal_to ->
     (match
@@ -83,10 +91,7 @@ let on_signal t ~f:action k =
          ~replace_with:(Awaiting { action = (Obj.magic_many [@mode portable]) action; k })
      with
      | Initial -> Null
-     | Signaled ->
-       This
-         ((Obj.magic_unique [@mode portable])
-            ((Obj.magic_uncontended [@mode portable]) k))
+     | Signaled -> This ((Obj.magic_unique [@mode contended portable]) k)
      | Awaiting _ -> failwith "Trigger.on_signal: already awaiting")
 ;;
 
@@ -104,6 +109,6 @@ let%template source t = t [@@mode m = (global, local)]
 let create () = Atomic.make Initial
 
 let create_with_action ~f:action k =
-  let k = (Obj.magic_many [@mode portable]) k in
+  let k = (Obj.magic_many [@mode contended portable]) k in
   Atomic.make (Awaiting { action = (Obj.magic_many [@mode portable]) action; k })
 ;;

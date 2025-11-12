@@ -145,7 +145,7 @@ module Global = struct
           ; daemon_cancellation = Cancellation.never
           ; failure = Null
           ; context
-          ; terminator = Terminator.Expert.globalize (Terminator.Expert.create ())
+          ; terminator = Terminator.Expert.create ()
           }
       }
     in

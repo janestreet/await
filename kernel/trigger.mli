@@ -29,6 +29,15 @@ module Source : sig
   (** [is_signalled t] is [true] if [t] has been signalled and [false] if it is
       unsignalled. *)
   val is_signalled : t @ local -> bool
+
+  (**/**)
+
+  module For_testing : sig
+    (** [signal_if_awaiting t] signals [t] only if the [t] is in the waiting state. This
+        is intended for testing / benchmarking the overheads of await implementations and
+        should not be used in other contexts. *)
+    val signal_if_awaiting : t @ local -> unit
+  end
 end
 
 (** [t] is the type of triggers. A sink can be used to register a callback with the
@@ -46,9 +55,9 @@ val is_signalled : t @ local -> bool
     if [t] already has a registered callback. *)
 val on_signal
   :  t @ local
-  -> f:('k @ once portable unique -> unit) @ once portable
-  -> 'k @ once portable unique
-  -> 'k or_null @ once portable unique
+  -> f:('k @ contended once portable unique -> unit) @ once portable
+  -> 'k @ contended once portable unique
+  -> 'k or_null @ contended once portable unique
 
 (** [drop t] unregisters the callback registered with [t] and marks [t] as signalled. It
     is [true] if [t] was previously unsignalled and a callback was successfully
@@ -81,8 +90,8 @@ val create : unit -> t
       ;;
     ]} *)
 val create_with_action
-  :  f:('k @ portable unique -> unit) @ once portable
-  -> 'k @ portable unique
+  :  f:('k @ contended once portable unique -> unit) @ once portable
+  -> 'k @ contended once portable unique
   -> t
 
 (** [source t] returns the associated source of the trigger [t]. *)

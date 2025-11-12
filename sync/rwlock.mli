@@ -1,5 +1,7 @@
 @@ portable
 
+(** A poisonable and freezable multiple readers, single writer lock. *)
+
 open Basement
 open Await_kernel
 

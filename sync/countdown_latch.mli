@@ -1,6 +1,6 @@
 @@ portable
 
-(** Countdown latches *)
+(** A poisonable one-shot countdown latch. *)
 
 open Base
 open Await_kernel

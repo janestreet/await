@@ -78,14 +78,17 @@ let schedule_with_await ?monitor ?priority terminator ~f =
       [@nontail]))
 ;;
 
+let non_eager_await_deferred t deferred =
+  let trigger = Trigger.create () in
+  Deferred.upon deferred (fun _value -> Trigger.Source.signal (Trigger.source trigger));
+  Await.await_until_terminated t trigger;
+  if Deferred.is_determined deferred
+  then Deferred.value_exn deferred
+  else raise Await.Terminated
+;;
+
 let await_deferred t deferred =
   if Deferred.is_determined deferred
   then Deferred.value_exn deferred
-  else (
-    let trigger = Trigger.create () in
-    Deferred.upon deferred (fun _value -> Trigger.Source.signal (Trigger.source trigger));
-    Await.await_until_terminated t trigger;
-    if Deferred.is_determined deferred
-    then Deferred.value_exn deferred
-    else raise Await.Terminated)
+  else non_eager_await_deferred t deferred
 ;;

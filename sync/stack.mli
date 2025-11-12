@@ -1,11 +1,13 @@
 @@ portable
 
+(** A multi-producer, multi-consumer concurrent stack. *)
+
 open Base
 open Await_kernel
 
 (** A simple, list-based multi-producer multi-consumer stack which provides both lock-free
     and blocking operations *)
-type 'a t : value mod contended portable
+type !'a t : value mod contended portable
 
 [%%rederive: type nonrec ('a : value mod contended) t = 'a t [@@deriving sexp_of]]
 

@@ -19,13 +19,22 @@ val schedule_with_await
 
 (** [await_deferred w deferred] awaits until the deferred becomes determined.
 
-    @raise Terminated if [w] is terminated before [deferred] becomes determined. *)
+    @raise [Terminated] if [w] is terminated before [deferred] becomes determined. *)
 val await_deferred : Await.t @ local -> 'a Deferred.t -> 'a
 [@@alert
   experimental
     "Effects are not supported in the OCaml 4 runtime, and breaking runtime4 builds does \
      not block continuous release. Please refrain from using effects until the 4 runtime \
      has been deprecated."]
+
+(** [non_eager_await_deferred w deferred] awaits until the deferred becomes determined.
+    Unlike [await_deferred], [non_eager_await_deferred] always resumes the current fiber
+    in a new async job, even if [deferred] is already determined. This is considerably
+    slower than immediately calling [Deferred.value_exn], but closer to
+    semantics-preserving with regard to [Deferred.bind].
+
+    @raise [Terminated] if [w] is terminated before [deferred] becomes determined. *)
+val non_eager_await_deferred : Await.t @ local -> 'a Deferred.t -> 'a
 
 module Expert : sig
   (** [with_await terminator ~f] runs [f w] as a fiber with a [w : Await.t] that will

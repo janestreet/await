@@ -67,17 +67,17 @@ end = struct
   ;;
 end
 
-type 'a awaiter =
+type ('a : value_or_null) awaiter =
   { comparand : 'a @@ contended portable
   ; trigger : Trigger.Source.t
   }
 
-type 'a awaitable =
+type ('a : value_or_null) awaitable =
   { mutable value : 'a portended [@atomic]
   ; mutable queue : 'a awaiter Queue.t [@atomic]
   }
 
-type 'a t = 'a awaitable contended
+type ('a : value_or_null) t = 'a awaitable contended
 
 let make value = { contended = { value = { portended = value }; queue = Queue.empty } }
 
@@ -130,6 +130,21 @@ let[@inline] set t value =
 
 let[@inline] incr t = ignore (fetch_and_add t 1 : int)
 let[@inline] decr t = ignore (fetch_and_add t (-1) : int)
+
+let[@inline] update_and_return t ~pure_f =
+  let[@inline] rec aux backoff =
+    let old = get t in
+    let new_ = pure_f old in
+    match compare_and_set t ~if_phys_equal_to:old ~replace_with:new_ with
+    | Set_here -> old
+    | Compare_failed -> aux (Backoff.once backoff)
+  in
+  aux Backoff.default [@nontail]
+;;
+
+let[@inline] update (type a : value_or_null) (t : a t) ~pure_f =
+  Basement.Stdlib_shim.ignore_contended (update_and_return t ~pure_f : a)
+;;
 
 type _ await =
   | Signaled : [> `Signaled ] await
@@ -219,6 +234,7 @@ let await_or_cancel w c t ~until_phys_unequal_to:comparand =
 module Awaiter = struct
   type t =
     | T :
+        ('a : value_or_null).
         { awaitable : 'a awaitable contended
         ; awaiter : 'a awaiter @@ global
         }

@@ -2,6 +2,8 @@ open Basement
 open Await_kernel
 
 module type Condition = sig
+  (** Condition variable for waiting for changes to state protected by a lock. *)
+
   type 'k lock
 
   (** ['k t] is the type of a condition variable associated with the capsule ['k]. This

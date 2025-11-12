@@ -49,12 +49,24 @@ val await_until_terminated_or_canceled
   -> Trigger.t
   -> unit
 
-(** [await_with_terminate t trigger ~terminate] will attach a trigger to call [terminate]
-    to the [terminator] of [t] and wait until [trigger] has been signalled. *)
+(** [await_with_terminate t trigger ~terminate r] will attach a trigger to call
+    [terminate r] to the {!terminator} of [t] and wait until [trigger] has been signalled. *)
 val await_with_terminate
   :  t @ local
   -> Trigger.t
-  -> terminate:(unit -> unit) @ once portable
+  -> terminate:('r @ contended once portable unique -> unit) @ once portable
+  -> 'r @ contended once portable unique
+  -> unit
+
+(** [await_with_terminate_or_cancel t c trigger ~terminate_or_cancel r] will attach a
+    trigger to call [terminate_or_cancel r] to both the {!terminator} of [t] and to the
+    given cancellation token [c] and then wait until [trigger] has been signalled. *)
+val await_with_terminate_or_cancel
+  :  t @ local
+  -> Cancellation.t @ local
+  -> Trigger.t
+  -> terminate_or_cancel:('r @ contended once portable unique -> unit) @ once portable
+  -> 'r @ contended once portable unique
   -> unit
 
 (** [is_terminated t] is [Terminator.is_terminated (terminator t)]. *)

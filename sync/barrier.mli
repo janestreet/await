@@ -2,7 +2,7 @@
 
 open Await_kernel
 
-(** A poisonable barrier.
+(** A poisonable multi-shot synchronization barrier.
 
     To use a barrier, one first {!create}s a barrier by specifying the number of
     independent threads of control, or {!parties}, participating in barrier

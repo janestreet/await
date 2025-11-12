@@ -3,7 +3,12 @@ open Base
 type%template ('a : k) t =
   | Canceled
   | Completed of 'a
-[@@kind k = (value_or_null, void, value_or_null & void)]
+[@@kind
+  k
+  = ( value_or_null
+    , void
+    , value_or_null & void
+    , (value_or_null & value_or_null) & value_or_null )]
 [@@deriving
   compare ~localize, equal ~localize, globalize, sexp ~stackify, sexp_grammar, hash]
 
@@ -12,7 +17,12 @@ let%template[@inline] completed_exn : (_ t[@kind k]) -> _ = function
   | Canceled ->
     (match failwith "[Await.Or_canceled.completed_exn]: Canceled" with
      | (_ : Nothing.t) -> .)
-[@@kind k = (value_or_null, void, value_or_null & void)]
+[@@kind
+  k
+  = ( value_or_null
+    , void
+    , value_or_null & void
+    , (value_or_null & value_or_null) & value_or_null )]
 ;;
 
 include Monad.Make [@mode local] [@modality portable] (struct

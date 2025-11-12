@@ -10,24 +10,26 @@ open Await_kernel
 (** {1 Atomic API} *)
 
 (** An awaitable atomic reference to a value of type ['a]. *)
-type !'a t : value mod contended portable
+type (!'a : value_or_null) t : value mod contended portable
 
 (** [make v] creates a new awaitable atomic reference with the given initial value [v]. *)
-val make : 'a @ contended portable -> 'a t
+val make : ('a : value_or_null). 'a @ contended portable -> 'a t
 
 (** [make_alone v] creates a new awaitable atomic reference with the given initial value
     [v], alone on a cache line to avoid false sharing. *)
-val make_alone : 'a @ contended portable -> 'a t
+val make_alone : ('a : value_or_null). 'a @ contended portable -> 'a t
 
 (** [get t] gets the current value of the awaitable atomic reference. *)
-val get : 'a t @ local -> 'a @ contended portable
+val get : ('a : value_or_null). 'a t @ local -> 'a @ contended portable
 
 (** [set t v] sets a new value [v] for the awaitable atomic reference. *)
-val set : 'a t @ local -> 'a @ contended portable -> unit
+val set : ('a : value_or_null). 'a t @ local -> 'a @ contended portable -> unit
 
 (** [exchange t v] sets a new value [v] for the awaitable atomic reference and returns the
     current value. *)
-val exchange : 'a t @ local -> 'a @ contended portable -> 'a @ contended portable
+val exchange
+  : ('a : value_or_null).
+  'a t @ local -> 'a @ contended portable -> 'a @ contended portable
 
 module Compare_failed_or_set_here = Atomic.Compare_failed_or_set_here
 
@@ -36,7 +38,8 @@ module Compare_failed_or_set_here = Atomic.Compare_failed_or_set_here
     the set occur atomically. Returns [true] if the comparison succeeded (so the set
     happened) and [false] otherwise. *)
 val compare_and_set
-  :  'a t @ local
+  : ('a : value_or_null).
+  'a t @ local
   -> if_phys_equal_to:'a @ contended portable
   -> replace_with:'a @ contended portable
   -> Compare_failed_or_set_here.t
@@ -45,7 +48,8 @@ val compare_and_set
     to [v] only if its current value is physically equal to [seen] -- the comparison and
     the set occur atomically. Returns the previous value. *)
 val compare_exchange
-  :  'a t @ local
+  : ('a : value_or_null).
+  'a t @ local
   -> if_phys_equal_to:'a @ contended portable
   -> replace_with:'a @ contended portable
   -> 'a @ contended portable
@@ -59,6 +63,23 @@ val incr : int t @ local -> unit
 
 (** [decr t] atomically decrements the value of [t] by [1]. *)
 val decr : int t @ local -> unit
+
+(** [update t ~pure_f] atomically updates [t] to be the result of [pure_f (get t)].
+    [pure_f] may be called multiple times, so should be free of side effects. *)
+val update
+  : ('a : value_or_null).
+  'a t @ local
+  -> pure_f:('a @ contended portable -> 'a @ contended portable) @ local
+  -> unit
+
+(** [update_and_return t ~pure_f] atomically updates [t] to be the result of
+    [pure_f (get t)]. [pure_f] may be called multiple times, so should be free of side
+    effects. Returns the old value. *)
+val update_and_return
+  : ('a : value_or_null).
+  'a t @ local
+  -> pure_f:('a @ contended portable -> 'a @ contended portable) @ local
+  -> 'a @ contended portable
 
 (** {1 Futex API} *)
 
@@ -87,7 +108,8 @@ type _ await =
     current thread that precede it, and the comparison of the current value of the
     awaitable [t] with the given value [v]. *)
 val await
-  :  Await.t @ local
+  : ('a : value_or_null).
+  Await.t @ local
   -> 'a t @ local
   -> until_phys_unequal_to:'a @ contended portable
   -> [ `Signaled | `Terminated ] await
@@ -100,24 +122,25 @@ val await
     {!broadcast} on the awaitable. Otherwise the return value is either {!Terminated} in
     case [w] is terminated, and {!Canceled} in case [c] is canceled. *)
 val await_or_cancel
-  :  Await.t @ local
+  : ('a : value_or_null).
+  Await.t @ local
   -> Cancellation.t @ local
   -> 'a t @ local
   -> until_phys_unequal_to:'a @ contended portable
   -> [ `Signaled | `Terminated | `Canceled ] await
 
 (** [signal t] tries to wake up at least one awaiter on the awaitable location [t]. *)
-val signal : 'a t @ local -> unit
+val signal : ('a : value_or_null). 'a t @ local -> unit
 
 (** [broadcast t] tries to wake up all the awaiters on the awaitable location [t]. *)
-val broadcast : 'a t @ local -> unit
+val broadcast : ('a : value_or_null). 'a t @ local -> unit
 
 (** An expert interface that allows an await to be setup separately from suspending the
     thread of control. This makes it possible to e.g. implement condition variables, which
     requires setting up the await before unlocking the associated mutex, and also makes it
     possible to await for one of many things. *)
 module Awaiter : sig
-  type 'a awaitable := 'a t
+  type ('a : value_or_null) awaitable := 'a t
 
   (** Represents a single use awaiter of a signal to an awaitable. *)
   type t
@@ -126,7 +149,8 @@ module Awaiter : sig
       given trigger [t], adds the awaiter to the FIFO associated with the awaitable [t],
       and returns the awaiter. *)
   val%template create_and_add
-    :  'a awaitable @ l
+    : ('a : value_or_null).
+    'a awaitable @ l
     -> Trigger.Source.t
     -> until_phys_unequal_to:'a @ contended portable
     -> t @ l
@@ -151,5 +175,5 @@ end
 module For_testing : sig
   (** [length t] returns an upper bound on the length of the internal queue of awaiters
       for testing purposes. *)
-  val length : 'a t @ local -> int
+  val length : ('a : value_or_null). 'a t @ local -> int
 end

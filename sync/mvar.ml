@@ -29,7 +29,7 @@ open Await_sync_intf
 *)
 
 module State : sig @@ portable
-  type 'a t : immutable_data with 'a @@ contended portable
+  type !'a t : immutable_data with 'a @@ contended portable
   (* = | Empty
        | Readers
        | Value of 'a @@ contended portable *)
@@ -46,7 +46,7 @@ module State : sig @@ portable
   val is_value : 'a t @ contended local -> bool
   val value : 'a t @ contended -> 'a or_null @ contended once portable unique
 end = struct
-  type +'a t : immutable_data with 'a @@ contended portable
+  type !+'a t : immutable_data with 'a @@ contended portable
 
   let empty = (Obj.magic [@mode contended portable]) (ref 0)
   let readers = (Obj.magic [@mode contended portable]) (ref 1)
@@ -221,3 +221,30 @@ let take_exn t =
 ;;
 
 let is_full t = t |> Awaitable.get |> State.is_value
+
+let rec wait_until_empty_as
+  : type a r.
+    Await.t @ local -> Cancellation.t @ local -> a t @ local -> (unit, r) result -> r
+  =
+  fun w c t r ->
+  let before = Awaitable.get t in
+  if State.is_value before
+  then (
+    match r with
+    | Value ->
+      (match Awaitable.await w t ~until_phys_unequal_to:before with
+       | Signaled -> wait_until_empty_as w c t r
+       | Terminated -> raise Await.Terminated)
+    | Or_canceled ->
+      (match Awaitable.await_or_cancel w c t ~until_phys_unequal_to:before with
+       | Signaled -> wait_until_empty_as w c t r
+       | Terminated -> raise Await.Terminated
+       | Canceled -> Canceled))
+  else (
+    match r with
+    | Value -> ()
+    | Or_canceled -> Completed ())
+;;
+
+let wait_until_empty w t = wait_until_empty_as w Cancellation.never t Value
+let wait_until_empty_or_cancel w c t = wait_until_empty_as w c t Or_canceled

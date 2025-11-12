@@ -1,5 +1,7 @@
 @@ portable
 
+(** A poisonable counting semaphore. *)
+
 open Await_kernel
 
 module Acquired_or_would_block : sig

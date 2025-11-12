@@ -79,21 +79,49 @@ let await_never_terminated t trigger =
   if not (Trigger.is_signalled trigger) then call_await t trigger
 ;;
 
-external magic_many : 'a @ once portable -> 'a @ many portable @@ portable = "%identity"
-
-let await_with_terminate (Await { terminator; _ } as t) trigger ~terminate =
-  let terminate = magic_many terminate in
+let await_with_terminate (Await { terminator; _ } as t) trigger ~terminate r =
   if not (Trigger.is_signalled trigger)
   then (
-    let on_terminate = Trigger.create_with_action ~f:terminate () in
+    let on_terminate = Trigger.create_with_action ~f:terminate r in
     match Terminator.add_trigger terminator (Trigger.source on_terminate) with
     | Terminated ->
-      terminate ();
+      Trigger.Source.signal (Trigger.source on_terminate);
       call_await t trigger
     | Attached | Signaled ->
       call_await t trigger;
       let _ : bool = Trigger.drop on_terminate in
       ())
+;;
+
+let await_with_terminate_or_cancel
+  (Await { terminator; _ } as t)
+  cancellation
+  trigger
+  ~terminate_or_cancel
+  request
+  =
+  if not (Trigger.is_signalled trigger)
+  then (
+    let on_terminate_or_cancel =
+      Trigger.create_with_action ~f:terminate_or_cancel request
+    in
+    match
+      Cancellation.add_trigger cancellation (Trigger.source on_terminate_or_cancel)
+    with
+    | Canceled ->
+      Trigger.Source.signal (Trigger.source on_terminate_or_cancel);
+      call_await t trigger
+    | Attached | Signaled ->
+      (match
+         Terminator.add_trigger terminator (Trigger.source on_terminate_or_cancel)
+       with
+       | Terminated ->
+         Trigger.Source.signal (Trigger.source on_terminate_or_cancel);
+         call_await t trigger
+       | Attached | Signaled ->
+         call_await t trigger;
+         let _ : bool = Trigger.drop on_terminate_or_cancel in
+         ()))
 ;;
 
 let is_terminated (Await { terminator; _ }) = Terminator.is_terminated terminator
