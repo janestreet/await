@@ -2,7 +2,7 @@ open Base
 open Await_kernel
 open Await_sync_intf
 
-(* The underlying state machine of an ivar:
+(*=The underlying state machine of an ivar:
 
                                                      [create_full]
                                                            |
@@ -16,7 +16,7 @@ open Await_sync_intf
 
 module State : sig @@ portable
   type +'a t : immutable_data with 'a @@ contended portable
-  (* = | Empty
+  (*== | Empty
        | Awaiters
        | Value of 'a @@ contended portable
   *)

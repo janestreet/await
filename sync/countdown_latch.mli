@@ -21,8 +21,11 @@ val max_count : int
 
 (** [create n] returns a new countdown latch with its count initialized to [n].
 
+    The optional [padded] argument specifies whether to pad the data structure to avoid
+    false sharing. See {!Atomic.make} for a longer explanation.
+
     @raise Invalid_argument if [n] is negative or greater than {!max_count}. *)
-val create : int -> t
+val create : ?padded:bool @ local -> int -> t
 
 (** [count t] returns the current count of the countdown latch [t]. *)
 val count : t @ local -> int

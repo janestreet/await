@@ -1,4 +1,4 @@
-(* The underlying state machine of a cancellation [Token]:
+(*=The underlying state machine of a cancellation [Token]:
 
       [with_*]
          |

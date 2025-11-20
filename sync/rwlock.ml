@@ -83,9 +83,11 @@ module Prim = struct
   end = struct
     (* The state looks like this:
 
-          Bit: [      0     |      1     | 2 to n-7 | n-6 |   n-5  |   n-4     | n-3 |   n-2     | n-1 ]
-          Use: [ no_writers ! no_readers |  shared  |     ! shared | exclusive |     ! exclusive |  0  ]
-               [       no_awaiters       |  count   |        perm. |           |         perm.   |     ]
+       Bit:
+       [      0     |      1     | 2 to n-7 | n-6 |   n-5  |   n-4     | n-3 |   n-2     | n-1 ]
+       Use:
+       [ no_writers ! no_readers |  shared  |     ! shared | exclusive |     ! exclusive |  0  ]
+       [       no_awaiters       |  count   |        perm. |           |         perm.   |     ]
 
        Above, [n] is the number of bits in an [int] and bit at [n-1] is the sign bit,
        which should normally always be [0].
@@ -152,7 +154,7 @@ module Prim = struct
     | Value : ('a, 'a) result
     | Or_canceled : ('a, 'a Or_canceled.t) result
 
-  let acquire_as (type r) w c t (r : (unit, r) result) : r =
+  let[@inline never] acquire_as (type r) w c t (r : (unit, r) result) : r =
     let[@inline] completed () : r =
       match r with
       | Value -> ()
@@ -167,7 +169,7 @@ module Prim = struct
     if phys_equal before assumption
     then completed ()
     else (
-      let rec acquire_awaiting w c t backoff before =
+      let[@inline] rec acquire_awaiting w c t backoff before =
         if State.is_unlocked before
         then (
           let after = before |> State.and_writers |> State.and_exclusive in
@@ -210,7 +212,7 @@ module Prim = struct
   let acquire_or_cancel w c t = acquire_as w c t Or_canceled
   let acquire w t = acquire_as w Cancellation.never t Value
 
-  let release t =
+  let[@inline never] release t =
     (* This is intentionally optimized optimistically for low contention. *)
     let assumption = State.no_awaiters |> State.and_exclusive in
     let after = State.no_awaiters in
@@ -219,7 +221,7 @@ module Prim = struct
     in
     if not (phys_equal before assumption)
     then (
-      let rec release_contended t backoff before =
+      let[@inline] rec release_contended t backoff before =
         if not (State.is_permanently before)
         then (
           let after = before |> State.and_not_exclusive |> State.and_no_awaiters in
@@ -239,7 +241,13 @@ module Prim = struct
       release_contended t Backoff.default before)
   ;;
 
-  let acquire_shared_as (type r) w c t (r : (unit, r) result) : r =
+  let[@inline never] release_and_reraise exn t =
+    let bt = Backtrace.Exn.most_recent () in
+    release t;
+    Exn.raise_with_original_backtrace exn bt
+  ;;
+
+  let[@inline never] acquire_shared_as (type r) w c t (r : (unit, r) result) : r =
     let[@inline] completed () : r =
       match r with
       | Value -> ()
@@ -249,7 +257,7 @@ module Prim = struct
     if not (State.is_exclusive prior)
     then completed ()
     else (
-      let rec acquire_shared_awaiting w c t backoff =
+      let[@inline] rec acquire_shared_awaiting w c t backoff =
         let before = Awaitable.get t in
         if not (State.is_exclusive before)
         then (
@@ -287,7 +295,7 @@ module Prim = struct
             let backoff = Backoff.once backoff in
             acquire_shared_awaiting w c t backoff))
       in
-      let rec acquire_shared_contended w c t backoff =
+      let[@inline] rec acquire_shared_contended w c t backoff =
         let before = Awaitable.get t in
         if not (State.is_exclusive before)
         then completed ()
@@ -307,11 +315,11 @@ module Prim = struct
   let acquire_shared_or_cancel w c t = acquire_shared_as w c t Or_canceled
   let acquire_shared w t = acquire_shared_as w Cancellation.never t Value
 
-  let release_shared t =
+  let[@inline never] release_shared t =
     let prior = State.decr_shared t in
     if State.is_shared_at_most_once_and_has_awaiters prior
     then (
-      let rec signal_awaiters t =
+      let[@inline] rec signal_awaiters t =
         let before = Awaitable.get t in
         if State.is_unlocked_and_has_awaiters before
         then (
@@ -331,11 +339,17 @@ module Prim = struct
       signal_awaiters t)
     else if State.is_exclusive_permanently prior
     then (
-      let undo_release_shared t =
+      let[@inline] undo_release_shared t =
         let _ : State.t = State.incr_shared t in
         ()
       in
       undo_release_shared t)
+  ;;
+
+  let[@inline never] release_shared_and_reraise exn t =
+    let bt = Backtrace.Exn.most_recent () in
+    release_shared t;
+    Exn.raise_with_original_backtrace exn bt
   ;;
 
   let[@inline never] rec poison t =
@@ -349,6 +363,12 @@ module Prim = struct
       | Compare_failed ->
         (* Backoff is probably not worth the trouble. *)
         poison t)
+  ;;
+
+  let[@inline never] poison_and_reraise exn t =
+    let bt = Backtrace.Exn.most_recent () in
+    poison t;
+    Exn.raise_with_original_backtrace exn bt
   ;;
 
   (** Note that [Prim.freeze] is idempotent and you typically need to
@@ -378,6 +398,13 @@ module Prim = struct
     if State.has_awaiters !before then Awaitable.broadcast t
   ;;
 
+  let[@inline never] freeze_release_shared_and_reraise exn t =
+    let bt = Backtrace.Exn.most_recent () in
+    freeze t;
+    release_shared t;
+    Exn.raise_with_original_backtrace exn bt
+  ;;
+
   let downgrade t =
     (* This is intentionally optimized optimistically for low contention. *)
     let assumption = State.no_awaiters |> State.and_exclusive in
@@ -401,12 +428,12 @@ module Prim = struct
       downgrade_contended t Backoff.default before)
   ;;
 
-  let[@inline] create () = Awaitable.make State.no_awaiters
+  let[@inline] create ?padded () = Awaitable.make ?padded State.no_awaiters
 end
 
 type 'k t = Prim.t
 
-let create _key = Prim.create ()
+let create ?padded _key = Prim.create ?padded ()
 
 module Shared_guard = struct
   type 'k rwlock = 'k t
@@ -513,10 +540,7 @@ module Guard = struct
     fun t ~f ->
     match f (Capsule.Key.unsafe_mk ()) with
     | #(res, _key) -> res, t
-    | exception exn ->
-      let bt = Backtrace.Exn.most_recent () in
-      Prim.poison t.inner.rwlock;
-      Exn.raise_with_original_backtrace exn bt
+    | exception exn -> Prim.poison_and_reraise exn t.inner.rwlock
   ;;
 
   let with_password
@@ -571,168 +595,153 @@ module Guard = struct
   ;;
 end
 
-let with_key
+[%%template
+[@@@alloc.default a @ l = (heap_global, stack_local)]
+
+let[@inline] with_key
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a @ once unique
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a @ l once unique
   =
   fun w t ~f ->
-  Prim.acquire w t;
-  match f (Capsule.Key.unsafe_mk ()) with
-  | #(res, _key) ->
-    Prim.release t;
-    res
-  | exception exn ->
-    let bt = Backtrace.Exn.most_recent () in
-    Prim.release t;
-    Exn.raise_with_original_backtrace exn bt
+  (Prim.acquire w t;
+   match f (Capsule.Key.unsafe_mk ()) with
+   | #(res, _key) ->
+     Prim.release t;
+     res
+   | exception exn -> Prim.release_and_reraise exn t)
+  [@exclave_if_stack a]
 ;;
 
-let with_key_poisoning
+let[@inline] with_key_poisoning
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a @ once unique
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a @ l once unique
   =
   fun w t ~f ->
-  Prim.acquire w t;
-  match f (Capsule.Key.unsafe_mk ()) with
-  | #(res, _key) ->
-    Prim.release t;
-    res
-  | exception exn ->
-    let bt = Backtrace.Exn.most_recent () in
-    Prim.poison t;
-    Exn.raise_with_original_backtrace exn bt
+  (Prim.acquire w t;
+   match f (Capsule.Key.unsafe_mk ()) with
+   | #(res, _key) ->
+     Prim.release t;
+     res
+   | exception exn -> Prim.poison_and_reraise exn t)
+  [@exclave_if_stack a]
 ;;
 
-let with_key_or_cancel
+let[@inline] with_key_or_cancel
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> Cancellation.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a Or_canceled.t @ once unique
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a Or_canceled.t @ l once unique
   =
   fun w c t ~f ->
-  match Prim.acquire_or_cancel w c t with
+  match[@exclave_if_stack a] Prim.acquire_or_cancel w c t with
   | Canceled -> Canceled
   | Completed () ->
     (match f (Capsule.Key.unsafe_mk ()) with
      | #(res, _key) ->
        Prim.release t;
        Completed res
-     | exception exn ->
-       let bt = Backtrace.Exn.most_recent () in
-       Prim.release t;
-       Exn.raise_with_original_backtrace exn bt)
+     | exception exn -> Prim.release_and_reraise exn t)
 ;;
 
-let with_key_or_cancel_poisoning
+let[@inline] with_key_or_cancel_poisoning
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> Cancellation.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a Or_canceled.t @ once unique
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a Or_canceled.t @ l once unique
   =
   fun w c t ~f ->
-  match Prim.acquire_or_cancel w c t with
+  match[@exclave_if_stack a] Prim.acquire_or_cancel w c t with
   | Canceled -> Canceled
   | Completed () ->
     (match f (Capsule.Key.unsafe_mk ()) with
      | #(res, _key) ->
        Prim.release t;
        Completed res
-     | exception exn ->
-       let bt = Backtrace.Exn.most_recent () in
-       Prim.poison t;
-       Exn.raise_with_original_backtrace exn bt)
+     | exception exn -> Prim.poison_and_reraise exn t)
 ;;
 
-let with_key_shared
+let[@inline] with_key_shared
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
-  -> 'a @ once unique
+  -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
+  -> 'a @ l once unique
   =
   fun w t ~f ->
-  Prim.acquire_shared w t;
-  match f (Capsule.Key.unsafe_mk ()) with
-  | res ->
-    Prim.release_shared t;
-    res
-  | exception exn ->
-    let bt = Backtrace.Exn.most_recent () in
-    Prim.release_shared t;
-    Exn.raise_with_original_backtrace exn bt
+  (Prim.acquire_shared w t;
+   match f (Capsule.Key.unsafe_mk ()) with
+   | res ->
+     Prim.release_shared t;
+     res
+   | exception exn -> Prim.release_shared_and_reraise exn t)
+  [@exclave_if_stack a]
 ;;
 
-let with_key_shared_freezing
+let[@inline] with_key_shared_freezing
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
-  -> 'a @ once unique
+  -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
+  -> 'a @ l once unique
   =
   fun w t ~f ->
-  Prim.acquire_shared w t;
-  match f (Capsule.Key.unsafe_mk ()) with
-  | res ->
-    Prim.release_shared t;
-    res
-  | exception exn ->
-    let bt = Backtrace.Exn.most_recent () in
-    Prim.freeze t;
-    Prim.release_shared t;
-    Exn.raise_with_original_backtrace exn bt
+  (Prim.acquire_shared w t;
+   match f (Capsule.Key.unsafe_mk ()) with
+   | res ->
+     Prim.release_shared t;
+     res
+   | exception exn -> Prim.freeze_release_shared_and_reraise exn t)
+  [@exclave_if_stack a]
 ;;
 
-let with_key_shared_or_cancel
+let[@inline] with_key_shared_or_cancel
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> Cancellation.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
-  -> 'a Or_canceled.t @ once unique
+  -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
+  -> 'a Or_canceled.t @ l once unique
   =
   fun w c t ~f ->
-  match Prim.acquire_shared_or_cancel w c t with
+  match[@exclave_if_stack a] Prim.acquire_shared_or_cancel w c t with
   | Canceled -> Canceled
   | Completed () ->
     (match f (Capsule.Key.unsafe_mk ()) with
      | res ->
        Prim.release_shared t;
        Completed res
-     | exception exn ->
-       let bt = Backtrace.Exn.most_recent () in
-       Prim.release_shared t;
-       Exn.raise_with_original_backtrace exn bt)
+     | exception exn -> Prim.release_shared_and_reraise exn t)
 ;;
 
-let with_key_shared_or_cancel_freezing
+let[@inline] with_key_shared_or_cancel_freezing
   :  Await.t @ local -> Cancellation.t @ local -> 'k t @ local
-  -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
-  -> 'a Or_canceled.t @ once unique
+  -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
+  -> 'a Or_canceled.t @ l once unique
   =
   fun w c t ~f ->
-  match Prim.acquire_shared_or_cancel w c t with
+  match[@exclave_if_stack a] Prim.acquire_shared_or_cancel w c t with
   | Canceled -> Canceled
   | Completed () ->
     (match f (Capsule.Key.unsafe_mk ()) with
      | res ->
        Prim.release_shared t;
        Completed res
-     | exception exn ->
-       let bt = Backtrace.Exn.most_recent () in
-       Prim.freeze t;
-       Prim.release_shared t;
-       Exn.raise_with_original_backtrace exn bt)
-;;
+     | exception exn -> Prim.freeze_release_shared_and_reraise exn t)
+;;]
 
 let acquire w t =
   Prim.acquire w t;

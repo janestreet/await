@@ -1,10 +1,9 @@
 open Base
-open Basement
 open Await_kernel
 
 type 'k t = bool Awaitable.t
 
-let create () = Awaitable.make true
+let create ?padded () = Awaitable.make ?padded true
 
 let[@inline] wait ~acquire ~release w t ~lock _k =
   let trigger = Trigger.create () in
@@ -21,7 +20,7 @@ let[@inline] wait ~acquire ~release w t ~lock _k =
   then (
     match raise Await.Terminated with
     | (_ : Nothing.t) -> .)
-  else Capsule.Key.unsafe_mk ()
+  else Capsule.Expert.Key.unsafe_mk ()
 ;;
 
 let signal = Awaitable.signal

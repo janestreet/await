@@ -4,7 +4,7 @@ open Await_kernel
 
 type 'a t = 'a Modes.Portended.t list Awaitable.t
 
-let create () = Awaitable.make []
+let create ?padded () = Awaitable.make ?padded []
 
 let sexp_of_t (type a : value mod contended) sexp_of_a (t : a t) =
   Awaitable.get t |> List.map ~f:(fun { portended } -> portended) |> [%sexp_of: a list]

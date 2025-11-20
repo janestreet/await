@@ -11,11 +11,14 @@ open Await_kernel
     Mvars are entirely linear - every {!put} value is {!take}n exactly once. *)
 type !'a t : value mod contended portable
 
-(** [create ()] returns a new empty mvar. *)
-val create : unit -> 'a t
+(** [create ()] returns a new empty mvar.
+
+    The optional [padded] argument specifies whether to pad the data structure to avoid
+    false sharing. See {!Atomic.make} for a longer explanation. *)
+val create : ?padded:bool @ local -> unit -> 'a t
 
 (** [create_full v] returns a new mvar filled with [v]. *)
-val create_full : 'a @ contended once portable unique -> 'a t
+val create_full : ?padded:bool @ local -> 'a @ contended once portable unique -> 'a t
 
 (** [put w t a] waits using [w] until the mvar [t] is empty, and then sets the value to
     [a]. If there are multiple concurrent [put]s, there is no fairness guarantee (ie,
@@ -44,7 +47,7 @@ end
     it returns [Already_full]. *)
 val try_put : 'a t @ local -> 'a @ contended once portable unique -> Ok_or_already_full.t
 
-(** [put_exn t a] sets the value of [t] to [a] and returns [Ok] if it is empty.
+(** [put_exn t a] sets the value of [t] to [a].
 
     @raise Already_full in case [t] was already full. *)
 val put_exn : 'a t @ local -> 'a @ contended once portable unique -> unit

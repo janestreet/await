@@ -89,8 +89,8 @@ module Prim = struct
 
     (* The state looks like this:
 
-          Bit: [      0            |  1  to  n-4  | n-3 |        n-2         | n-1 ]
-          Use: [ no_need_to_signal | locked count |     | locked permanently |  0  ]
+       Bit: [      0            |  1  to  n-4  | n-3 |        n-2         | n-1 ] Use:
+       [ no_need_to_signal | locked count |     | locked permanently |  0  ]
 
        Above, [n] is the number of bits in an [int] and bit at [n-1] is the sign bit,
        which should normally always be [0].
@@ -103,7 +103,7 @@ module Prim = struct
     let unlocked_and_no_need_to_signal = no_need_to_signal
     let unlocked_and_need_to_signal = 0
 
-    (* [locked] is the value [1] of counter bits.  The counter is manipulated using
+    (* [locked] is the value [1] of counter bits. The counter is manipulated using
        [fetch_and_add] and may temporarily be greater than [locked].
 
        There is no fear of overflow, because the number of extra increments is bounded by
@@ -126,19 +126,17 @@ module Prim = struct
     let[@inline] is_locked_at_most_once state = state < locked * 2
 
     let[@inline] has_uncontended_awaiters state =
-      (* This is [true] when the [no_need_to_signal] bit has been cleared, meaning that there
-         are awaiters, and no other thread has temporarily incremented the [locked] count.
-         This is the case where we need to signal an awaiter.  In other cases we don't
-         need to signal, because either there are no awaiters or there are threads
-         contending for the mutex and one of them will notice the lock has been
-         released. *)
+      (* This is [true] when the [no_need_to_signal] bit has been cleared, meaning that
+         there are awaiters, and no other thread has temporarily incremented the [locked]
+         count. This is the case where we need to signal an awaiter. In other cases we
+         don't need to signal, because either there are no awaiters or there are threads
+         contending for the mutex and one of them will notice the lock has been released. *)
       state = locked
     ;;
 
     let[@inline] is_locked_permanently state =
       (* This allows lower values so that [release] may optimistically use [fetch_and_add]
-         and revert the counter decrement later in case the mutex was locked
-         permanently. *)
+         and revert the counter decrement later in case the mutex was locked permanently. *)
       locked_permanently / 2 <= state
     ;;
 
@@ -168,7 +166,7 @@ module Prim = struct
     | Value : ('a, 'a) result
     | Or_canceled : ('a, 'a Or_canceled.t) result
 
-  let acquire_as (type r) w c t (r : (unit, r) result) : r =
+  let[@inline never] acquire_as (type r) w c t (r : (unit, r) result) : r =
     let[@inline] completed () : r =
       match r with
       | Value -> ()
@@ -178,7 +176,7 @@ module Prim = struct
     if not (State.is_locked prior)
     then completed ()
     else (
-      let rec acquire_awaiting w c t backoff before =
+      let[@inline] rec acquire_awaiting w c t backoff before =
         if not (State.is_locked before)
         then (
           (* We know [before] is [no_need_to_signal] or [awaiters]. *)
@@ -216,7 +214,7 @@ module Prim = struct
             let backoff = Backoff.once backoff in
             acquire_awaiting w c t backoff (Awaitable.get t)))
       in
-      let rec acquire_contended w c t backoff before =
+      let[@inline] rec acquire_contended w c t backoff before =
         (* At this point we have incremented the [locked] count.
 
            We now check whether we actually managed to obtain the mutex exclusively or
@@ -239,38 +237,49 @@ module Prim = struct
   let acquire_or_cancel w c t = acquire_as w c t Or_canceled
   let acquire w t = acquire_as w Cancellation.never t Value
 
-  let signal_awaiter t =
-    match
-      (* Lock state was [State.no_need_to_signal] after the [fetch_and_add]. *)
-      Awaitable.compare_and_set
-        t
-        ~if_phys_equal_to:State.unlocked_and_need_to_signal
-        ~replace_with:State.unlocked_and_no_need_to_signal
-    with
-    | Set_here -> Awaitable.signal t
-    | Compare_failed -> ()
-  ;;
-
-  let release t =
+  let[@inline never] release t =
+    let[@inline] signal_awaiter t =
+      match
+        Awaitable.compare_and_set
+          t
+          ~if_phys_equal_to:State.unlocked_and_need_to_signal
+          ~replace_with:State.unlocked_and_no_need_to_signal
+      with
+      | Set_here -> Awaitable.signal t
+      | Compare_failed -> ()
+    in
+    let[@inline] undo_release t =
+      let _ : State.t = State.incr_locked t in
+      ()
+    in
     (* At this point we assume we have previously incremented [locked] count. *)
     let prior = State.decr_locked t in
     if State.has_uncontended_awaiters prior
     then signal_awaiter t
     else if State.is_locked_permanently prior
-    then (
-      let undo_release t =
-        let _ : State.t = State.incr_locked t in
-        ()
-      in
-      undo_release t)
+    then undo_release t
   ;;
 
-  let[@inline] create () = Awaitable.make State.unlocked_and_no_need_to_signal
+  let[@inline never] release_and_reraise exn t =
+    let bt = Backtrace.Exn.most_recent () in
+    release t;
+    Exn.raise_with_original_backtrace exn bt
+  ;;
+
+  let[@inline never] poison_and_reraise exn t =
+    let bt = Backtrace.Exn.most_recent () in
+    poison t;
+    Exn.raise_with_original_backtrace exn bt
+  ;;
+
+  let[@inline] create ?padded () =
+    Awaitable.make ?padded State.unlocked_and_no_need_to_signal
+  ;;
 end
 
 type 'k t = Prim.t
 
-let create _key = Prim.create ()
+let create ?padded _key = Prim.create ?padded ()
 
 module Guard = struct
   type 'k mutex = 'k t
@@ -302,10 +311,7 @@ module Guard = struct
     fun t ~f ->
     match f (Capsule.Key.unsafe_mk ()) with
     | #(res, _key) -> res, t
-    | exception exn ->
-      let bt = Backtrace.Exn.most_recent () in
-      Prim.poison t.inner.mutex;
-      Exn.raise_with_original_backtrace exn bt
+    | exception exn -> Prim.poison_and_reraise exn t.inner.mutex
   ;;
 
   let with_password
@@ -360,42 +366,6 @@ module Guard = struct
   let is_poisoning { inner } = Atomic.Loc.get [%atomic.loc inner.should_poison]
 end
 
-let with_key_poisoning
-  :  Await.t @ local -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a @ once unique
-  =
-  fun w t ~f ->
-  Prim.acquire w t;
-  match f (Capsule.Key.unsafe_mk ()) with
-  | #(res, _key) ->
-    Prim.release t;
-    res
-  | exception exn ->
-    let bt = Backtrace.Exn.most_recent () in
-    Prim.poison t;
-    Exn.raise_with_original_backtrace exn bt
-;;
-
-let with_key_or_cancel_poisoning
-  :  Await.t @ local -> Cancellation.t @ local -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a Or_canceled.t @ once unique
-  =
-  fun w c t ~f ->
-  match Prim.acquire_or_cancel w c t with
-  | Canceled -> Canceled
-  | Completed () ->
-    (match f (Capsule.Key.unsafe_mk ()) with
-     | #(res, _key) ->
-       Prim.release t;
-       Completed res
-     | exception exn ->
-       let bt = Backtrace.Exn.most_recent () in
-       Prim.poison t;
-       Exn.raise_with_original_backtrace exn bt)
-;;
-
 let acquire w t =
   Prim.acquire w t;
   Guard.create t
@@ -410,43 +380,75 @@ let acquire_or_cancel
   | Completed () -> Completed (Guard.create t)
 ;;
 
-let with_key
+[%%template
+[@@@alloc.default a @ l = (heap_global, stack_local)]
+
+let[@inline] with_key
   : type (a : value_or_null) k.
     Await.t @ local
     -> k t @ local
-    -> f:(k Capsule.Key.t @ unique -> #(a * k Capsule.Key.t) @ once unique) @ local once
-    -> a @ once unique
+    -> f:(k Capsule.Key.t @ unique -> #(a * k Capsule.Key.t) @ l once unique) @ local once
+    -> a @ l once unique
   =
   fun w t ~f ->
-  Prim.acquire w t;
-  match f (Capsule.Key.unsafe_mk ()) with
-  | #(res, _key) ->
-    Prim.release t;
-    res
-  | exception exn ->
-    let bt = Backtrace.Exn.most_recent () in
-    Prim.release t;
-    Exn.raise_with_original_backtrace exn bt
+  (Prim.acquire w t;
+   match f (Capsule.Key.unsafe_mk ()) with
+   | #(res, _key) ->
+     Prim.release t;
+     res
+   | exception exn -> Prim.release_and_reraise exn t)
+  [@exclave_if_stack a]
 ;;
 
-let with_key_or_cancel
+let[@inline] with_key_or_cancel
   :  Await.t @ local -> Cancellation.t @ local -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a Or_canceled.t @ once unique
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a Or_canceled.t @ l once unique
   =
   fun w c t ~f ->
-  match Prim.acquire_or_cancel w c t with
+  match[@exclave_if_stack a] Prim.acquire_or_cancel w c t with
   | Canceled -> Canceled
   | Completed () ->
     (match f (Capsule.Key.unsafe_mk ()) with
      | #(res, _key) ->
        Prim.release t;
        Completed res
-     | exception exn ->
-       let bt = Backtrace.Exn.most_recent () in
-       Prim.release t;
-       Exn.raise_with_original_backtrace exn bt)
+     | exception exn -> Prim.release_and_reraise exn t)
 ;;
+
+let[@inline] with_key_poisoning
+  :  Await.t @ local -> 'k t @ local
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a @ l once unique
+  =
+  fun w t ~f ->
+  (Prim.acquire w t;
+   match f (Capsule.Key.unsafe_mk ()) with
+   | #(res, _key) ->
+     Prim.release t;
+     res
+   | exception exn -> Prim.poison_and_reraise exn t)
+  [@exclave_if_stack a]
+;;
+
+let[@inline] with_key_or_cancel_poisoning
+  :  Await.t @ local -> Cancellation.t @ local -> 'k t @ local
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a Or_canceled.t @ l once unique
+  =
+  fun w c t ~f ->
+  match[@exclave_if_stack a] Prim.acquire_or_cancel w c t with
+  | Canceled -> Canceled
+  | Completed () ->
+    (match f (Capsule.Key.unsafe_mk ()) with
+     | #(res, _key) ->
+       Prim.release t;
+       Completed res
+     | exception exn -> Prim.poison_and_reraise exn t)
+;;]
 
 let with_access_poisoning w t ~f =
   (with_key_poisoning w t ~f:(fun key ->

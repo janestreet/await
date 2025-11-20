@@ -79,11 +79,10 @@ type ('a : value_or_null) awaitable =
 
 type ('a : value_or_null) t = 'a awaitable contended
 
-let make value = { contended = { value = { portended = value }; queue = Queue.empty } }
-
-let make_alone value =
+let[@inline] make ?padded value =
   { contended =
-      Portable_common.Padding.copy_as_padded
+      Portable_common.Padding.copy_as
+        ?padded
         { value = { portended = value }; queue = Queue.empty }
   }
 ;;

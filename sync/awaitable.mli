@@ -12,12 +12,11 @@ open Await_kernel
 (** An awaitable atomic reference to a value of type ['a]. *)
 type (!'a : value_or_null) t : value mod contended portable
 
-(** [make v] creates a new awaitable atomic reference with the given initial value [v]. *)
-val make : ('a : value_or_null). 'a @ contended portable -> 'a t
+(** [make v] creates a new awaitable atomic reference with the given initial value [v].
 
-(** [make_alone v] creates a new awaitable atomic reference with the given initial value
-    [v], alone on a cache line to avoid false sharing. *)
-val make_alone : ('a : value_or_null). 'a @ contended portable -> 'a t
+    The optional [padded] argument specifies whether to pad the data structure to avoid
+    false sharing. See {!Atomic.make} for a longer explanation. *)
+val make : ('a : value_or_null). ?padded:bool @ local -> 'a @ contended portable -> 'a t
 
 (** [get t] gets the current value of the awaitable atomic reference. *)
 val get : ('a : value_or_null). 'a t @ local -> 'a @ contended portable

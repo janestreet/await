@@ -55,10 +55,10 @@ let sexp_of_t t =
 
 let max_count = State.max_count
 
-let create count =
+let create ?padded count =
   if count < 0 || max_count < count
   then invalid_arg "Countdown_latch.create: invalid initial count"
-  else Awaitable.make (State.from_count count)
+  else Awaitable.make ?padded (State.from_count count)
 ;;
 
 let rec poison t =

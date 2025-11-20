@@ -9,6 +9,7 @@ type%template ('a : k) t =
   k
   = ( void
     , value_or_null & void
+    , value_or_null & value_or_null
     , (value_or_null & value_or_null) & value_or_null
     , value_or_null )]
 [@@deriving
@@ -21,6 +22,11 @@ val%template completed_exn : ('a : k). ('a t[@kind k]) -> 'a
   = ( value_or_null
     , void
     , value_or_null & void
+    , value_or_null & value_or_null
     , (value_or_null & value_or_null) & value_or_null )]
 
-include Monad.S [@mode local] with type 'a t := 'a t
+include Monad.S [@kind value_or_null] [@mode local] with type 'a t := 'a t
+
+(** [never_completed t] can be used for an [Or_canceled.t] computation which either loops
+    forever or is canceled. *)
+val never_completed : Nothing.t t @ local -> unit

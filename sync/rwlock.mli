@@ -2,37 +2,26 @@
 
 (** A poisonable and freezable multiple readers, single writer lock. *)
 
-open Basement
 open Await_kernel
+module Capsule := Capsule.Expert
+
+(** {1 Creating a readers/writer lock} *)
 
 (** [k t] is the type of a read/write lock protecting the contents of the [k] capsule. *)
 type 'k t : value mod contended portable
 
 (** [create k] creates a new reader-writer lock for the capsule ['k] associated with [k],
-    consuming the key itself. *)
-val create : 'k Capsule.Key.t @ unique -> 'k t
+    consuming the key itself.
 
-(** [with_access w t ~f] acquires [t] for writing, runs [f] within the associated capsule,
-    then releases [t]. If [t] is locked then uses [w] to wait until it is unlocked.
+    The optional [padded] argument specifies whether to pad the data structure to avoid
+    false sharing. See {!Atomic.make} for a longer explanation. *)
+val create : ?padded:bool @ local -> 'k Capsule.Key.t @ unique -> 'k t
 
-    @raise Poisoned if [t] cannot be acquired because it is poisoned.
-    @raise Frozen if [t] cannot be acquired for writing because it is frozen.
-    @raise Terminated if [w] is terminated before the lock is acquired. *)
-val with_access
-  : ('a : value_or_null) 'k.
-  Await.t @ local
-  -> 'k t @ local
-  -> f:('k Capsule.Access.t -> 'a @ contended once portable unique) @ local once portable
-  -> 'a @ contended once portable unique
+(** {1 Executing critical sections} *)
 
-(** [with_access_poisoning w t ~f] is [with_access w t ~f], but poisons [t] if [f] raises
-    an uncaught exception. *)
-val with_access_poisoning
-  : ('a : value_or_null) 'k.
-  Await.t @ local
-  -> 'k t @ local
-  -> f:('k Capsule.Access.t -> 'a @ contended once portable unique) @ local once portable
-  -> 'a @ contended once portable unique
+(** {2 With [Access]} *)
+
+(** {3 Shared by readers} *)
 
 (** [with_access_shared w t ~f] acquires [t] for reading, runs [f] with shared access to
     the associated capsule, then releases [t]. If [t] is locked for writing then uses [w]
@@ -58,26 +47,6 @@ val with_access_shared_freezing
      @ local once portable
   -> 'a @ contended once portable unique
 
-(** [with_access_or_cancel w c t ~f] is [Completed (with_access w t ~f)] if [c] is not
-    canceled, otherwise it is [Canceled]. *)
-val with_access_or_cancel
-  : ('a : value_or_null) 'k.
-  Await.t @ local
-  -> Cancellation.t @ local
-  -> 'k t @ local
-  -> f:('k Capsule.Access.t -> 'a @ contended once portable unique) @ local once portable
-  -> 'a Or_canceled.t @ contended once portable unique
-
-(** [with_access_or_cancel_poisoning w c t ~f] is [with_access_or_cancel w c t ~f], but
-    poisons [t] if [f] raises an uncaught exception. *)
-val with_access_or_cancel_poisoning
-  : ('a : value_or_null) 'k.
-  Await.t @ local
-  -> Cancellation.t @ local
-  -> 'k t @ local
-  -> f:('k Capsule.Access.t -> 'a @ contended once portable unique) @ local once portable
-  -> 'a Or_canceled.t @ contended once portable unique
-
 (** [with_access_shared_or_cancel w c t ~f] is [Completed (with_access_shared w t ~f)] if
     [c] is not canceled, otherwise it is [Canceled]. *)
 val with_access_shared_or_cancel
@@ -101,48 +70,53 @@ val with_access_shared_or_cancel_freezing
      @ local once portable
   -> 'a Or_canceled.t @ contended once portable unique
 
-(** [with_password w t ~f] acquires [t], runs [f] with permission to access the associated
-    capsule, then releases [t]. If [t] is locked then uses [w] to wait until it is
-    unlocked.
+(** {3 Uncontended for a writer} *)
+
+(** [with_access w t ~f] acquires [t] for writing, runs [f] within the associated capsule,
+    then releases [t]. If [t] is locked then uses [w] to wait until it is unlocked.
 
     @raise Poisoned if [t] cannot be acquired because it is poisoned.
     @raise Frozen if [t] cannot be acquired for writing because it is frozen.
     @raise Terminated if [w] is terminated before the lock is acquired. *)
-val with_password
+val with_access
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
-  -> 'a @ unique
+  -> f:('k Capsule.Access.t -> 'a @ contended once portable unique) @ local once portable
+  -> 'a @ contended once portable unique
 
-(** [with_password_poisoning w t ~f] is [with_password w t ~f], but poisons [t] if [f]
-    raises an uncaught exception. *)
-val with_password_poisoning
+(** [with_access_poisoning w t ~f] is [with_access w t ~f], but poisons [t] if [f] raises
+    an uncaught exception. *)
+val with_access_poisoning
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
-  -> 'a @ unique
+  -> f:('k Capsule.Access.t -> 'a @ contended once portable unique) @ local once portable
+  -> 'a @ contended once portable unique
 
-(** [with_password_or_cancel w c t ~f] is [Completed (with_password w t ~f)] if [c] is not
+(** [with_access_or_cancel w c t ~f] is [Completed (with_access w t ~f)] if [c] is not
     canceled, otherwise it is [Canceled]. *)
-val with_password_or_cancel
+val with_access_or_cancel
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> Cancellation.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
-  -> 'a Or_canceled.t @ unique
+  -> f:('k Capsule.Access.t -> 'a @ contended once portable unique) @ local once portable
+  -> 'a Or_canceled.t @ contended once portable unique
 
-(** [with_password_or_cancel_poisoning w c t ~f] is [with_password_or_cancel w c t ~f],
-    but poisons [t] if [f] raises an uncaught exception. *)
-val with_password_or_cancel_poisoning
+(** [with_access_or_cancel_poisoning w c t ~f] is [with_access_or_cancel w c t ~f], but
+    poisons [t] if [f] raises an uncaught exception. *)
+val with_access_or_cancel_poisoning
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> Cancellation.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
-  -> 'a Or_canceled.t @ unique
+  -> f:('k Capsule.Access.t -> 'a @ contended once portable unique) @ local once portable
+  -> 'a Or_canceled.t @ contended once portable unique
+
+(** {2 With a local} *)
+
+(** {3 [Password.Shared] by readers} *)
 
 (** [with_password_shared w t ~f] acquires [t], runs [f] with permission to access the
     associated capsule, then releases [t]. If [t] is locked then uses [w] to wait until it
@@ -187,48 +161,57 @@ val with_password_shared_or_cancel_freezing
   -> f:('k Capsule.Password.Shared.t @ local -> 'a @ unique) @ local once
   -> 'a Or_canceled.t @ unique
 
-(** [with_key w t ~f] locks [t] for writing and runs [f], providing it a key for ['k]
-    uniquely. If [t] is locked for reading or writing, then [with_key] uses [w] to wait
-    until it is unlocked.
+(** {3 [Password] for a writer} *)
+
+(** [with_password w t ~f] acquires [t], runs [f] with permission to access the associated
+    capsule, then releases [t]. If [t] is locked then uses [w] to wait until it is
+    unlocked.
 
     @raise Poisoned if [t] cannot be acquired because it is poisoned.
     @raise Frozen if [t] cannot be acquired for writing because it is frozen.
     @raise Terminated if [w] is terminated before the lock is acquired. *)
-val with_key
+val with_password
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a @ once unique
+  -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
+  -> 'a @ unique
 
-(** [with_key_poisoning w t ~f] is [with_key w t ~f], but poisons [t] if [f] raises an
-    uncaught exception. *)
-val with_key_poisoning
+(** [with_password_poisoning w t ~f] is [with_password w t ~f], but poisons [t] if [f]
+    raises an uncaught exception. *)
+val with_password_poisoning
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a @ once unique
+  -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
+  -> 'a @ unique
 
-(** [with_key_or_cancel w c t ~f] is [Completed (with_key w t ~f)] if [c] is not canceled,
-    otherwise it is [Canceled] *)
-val with_key_or_cancel
+(** [with_password_or_cancel w c t ~f] is [Completed (with_password w t ~f)] if [c] is not
+    canceled, otherwise it is [Canceled]. *)
+val with_password_or_cancel
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> Cancellation.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a Or_canceled.t @ once unique
+  -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
+  -> 'a Or_canceled.t @ unique
 
-(** [with_key_or_cancel_poisoning w c t ~f] is [with_key_or_cancel w c t ~f], but poisons
-    [t] if [f] raises an uncaught exception. *)
-val with_key_or_cancel_poisoning
+(** [with_password_or_cancel_poisoning w c t ~f] is [with_password_or_cancel w c t ~f],
+    but poisons [t] if [f] raises an uncaught exception. *)
+val with_password_or_cancel_poisoning
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> Cancellation.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a Or_canceled.t @ once unique
+  -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
+  -> 'a Or_canceled.t @ unique
+
+(** {2 With a [Key]} *)
+
+[%%template:
+[@@@alloc.default a @ l = (heap_global, stack_local)]
+
+(** {3 Aliased for readers} *)
 
 (** [with_key_shared w t ~f] locks [t] for reading and runs [f], providing it an aliased
     key for ['k]. If [t] is locked for writing, then [with_key_shared] uses [w] to wait
@@ -240,8 +223,8 @@ val with_key_shared
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
-  -> 'a @ once unique
+  -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
+  -> 'a @ l once unique
 
 (** [with_key_shared_freezing w t ~f] is [with_key_shared w t ~f], but freezes [t] if [f]
     raises an uncaught exception. *)
@@ -249,8 +232,8 @@ val with_key_shared_freezing
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
-  -> 'a @ once unique
+  -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
+  -> 'a @ l once unique
 
 (** [with_key_shared_or_cancel w c t ~f] is [Completed (with_key_shared w t ~f)] if [c] is
     not canceled, otherwise it is [Canceled] *)
@@ -259,8 +242,8 @@ val with_key_shared_or_cancel
   Await.t @ local
   -> Cancellation.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
-  -> 'a Or_canceled.t @ once unique
+  -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
+  -> 'a Or_canceled.t @ l once unique
 
 (** [with_key_shared_or_cancel_freezing w c t ~f] is [with_key_shared_or_cancel w c t ~f],
     but freezes [t] if [f] raises an uncaught exception. *)
@@ -269,14 +252,73 @@ val with_key_shared_or_cancel_freezing
   Await.t @ local
   -> Cancellation.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
-  -> 'a Or_canceled.t @ once unique
+  -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
+  -> 'a Or_canceled.t @ l once unique
+
+(** {3 Unique for a writer} *)
+
+(** [with_key w t ~f] locks [t] for writing and runs [f], providing it a key for ['k]
+    uniquely. If [t] is locked for reading or writing, then [with_key] uses [w] to wait
+    until it is unlocked.
+
+    @raise Poisoned if [t] cannot be acquired because it is poisoned.
+    @raise Frozen if [t] cannot be acquired for writing because it is frozen.
+    @raise Terminated if [w] is terminated before the lock is acquired. *)
+val with_key
+  : ('a : value_or_null) 'k.
+  Await.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a @ l once unique
+
+(** [with_key_poisoning w t ~f] is [with_key w t ~f], but poisons [t] if [f] raises an
+    uncaught exception. *)
+val with_key_poisoning
+  : ('a : value_or_null) 'k.
+  Await.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a @ l once unique
+
+(** [with_key_or_cancel w c t ~f] is [Completed (with_key w t ~f)] if [c] is not canceled,
+    otherwise it is [Canceled] *)
+val with_key_or_cancel
+  : ('a : value_or_null) 'k.
+  Await.t @ local
+  -> Cancellation.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a Or_canceled.t @ l once unique
+
+(** [with_key_or_cancel_poisoning w c t ~f] is [with_key_or_cancel w c t ~f], but poisons
+    [t] if [f] raises an uncaught exception. *)
+val with_key_or_cancel_poisoning
+  : ('a : value_or_null) 'k.
+  Await.t @ local
+  -> Cancellation.t @ local
+  -> 'k t @ local
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a Or_canceled.t @ l once unique]
+
+(** {4 And waiting for a [Condition]} *)
+
+module Condition : Condition_intf.Condition with type 'k lock := 'k t (** @open *)
+
+(** {4 And poisoning indefinitely} *)
 
 (** [poison t key] poisons the rwlock associated with the [key].
 
     Note that poisoning a rwlock does not signal waiters on associated {{!Condition}
     condition variables}. *)
 val poison : 'k t @ local -> 'k Capsule.Key.t @ unique -> 'k Capsule.Key.t @ unique
+
+(** {2 With arbitrary dynamic scope} *)
+
+(** {3 For readers} *)
 
 module Shared_guard : sig
   (** ['k Rwlock.Shared_guard.t] represents a reader-writer locked that is locked
@@ -318,6 +360,28 @@ module Shared_guard : sig
       the capsule. *)
   val freeze : 'k t @ unique -> 'k Capsule.Key.t
 end
+
+(** [acquire_shared w t] acquires [t] for reading and returns a {!Shared_guard.t} for the
+    lock. If [t] is already locked for writing, [acquire_shared] uses [w] to block until
+    it is only locked for reading.
+
+    @raise Poisoned if [t] cannot be acquired because it is poisoned.
+    @raise Terminated if [w] is terminated before the lock is acquired. *)
+val acquire_shared : Await.t @ local -> 'k t -> 'k Shared_guard.t @ unique
+
+(** [acquire_shared_or_cancel w c t] is [Completed (acquire_shared w t)] if [c] is not
+    canceled, otherwise it is [Canceled].
+
+    @raise Poisoned if [t] cannot be acquired because it is poisoned.
+    @raise Terminated
+      if [w] is terminated before the lock is acquired, even if [c] is canceled. *)
+val acquire_shared_or_cancel
+  :  Await.t @ local
+  -> Cancellation.t @ local
+  -> 'k t
+  -> 'k Shared_guard.t Or_canceled.t @ unique
+
+(** {3 For a writer} *)
 
 module Guard : sig
   (** ['k Rwlock.Guard.t] represents a reader-writer lock that is locked exclusively for
@@ -384,25 +448,7 @@ val acquire_or_cancel
   -> 'k t
   -> 'k Guard.t Or_canceled.t @ unique
 
-(** [acquire_shared w t] acquires [t] for reading and returns a {!Shared_guard.t} for the
-    lock. If [t] is already locked for writing, [acquire_shared] uses [w] to block until
-    it is only locked for reading.
-
-    @raise Poisoned if [t] cannot be acquired because it is poisoned.
-    @raise Terminated if [w] is terminated before the lock is acquired. *)
-val acquire_shared : Await.t @ local -> 'k t -> 'k Shared_guard.t @ unique
-
-(** [acquire_shared_or_cancel w c t] is [Completed (acquire_shared w t)] if [c] is not
-    canceled, otherwise it is [Canceled].
-
-    @raise Poisoned if [t] cannot be acquired because it is poisoned.
-    @raise Terminated
-      if [w] is terminated before the lock is acquired, even if [c] is canceled. *)
-val acquire_shared_or_cancel
-  :  Await.t @ local
-  -> Cancellation.t @ local
-  -> 'k t
-  -> 'k Shared_guard.t Or_canceled.t @ unique
+(** {1 Poisoning as a signal} *)
 
 (** [is_poisoned t] is [true] if the reader-writer lock [t] is poisoned. *)
 val is_poisoned : 'k t @ local -> bool
@@ -410,7 +456,7 @@ val is_poisoned : 'k t @ local -> bool
 (** [is_frozen t] is [true] if the reader-writer lock [t] is frozen. *)
 val is_frozen : 'k t @ local -> bool
 
-module Condition : Condition_intf.Condition with type 'k lock := 'k t (** @open *)
+(**/**)
 
 module For_testing : sig
   (** [is_exclusive t] determines whether the rwlock [t] is acquired exclusively. *)

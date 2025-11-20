@@ -1,7 +1,7 @@
 open! Base
 open! Portable_kernel
 
-(* The underlying state machine of a trigger:
+(*=The underlying state machine of a trigger:
 
      [create]
         |

@@ -19,8 +19,8 @@ type ('a, _) state : value mod contended portable =
   (* The updates of [wait] are safe.  Search for "happens-before" in comments below. *)]
 
 let[@inline] value_of state =
-  (* When [r.value] is at the same position in all cases the match and projection below can
-     be optimized to a single instruction. *)
+  (* When [r.value] is at the same position in all cases the match and projection below
+     can be optimized to a single instruction. *)
   match state with
   | Value r -> r.value
   | Update r -> r.value
@@ -40,7 +40,7 @@ type 'a t = ('a, [ `Value | `Update | `Poisoned ]) state Awaitable.t
 let rec poison_and_raise t exn bt =
   match Awaitable.get t with
   | (Value _ | Update _) as before ->
-    (* At this point we known that an update has raised.  So, we do not try to finish the
+    (* At this point we known that an update has raised. So, we do not try to finish the
        update. *)
     let after = Poisoned { value = value_of before } in
     (match Awaitable.compare_and_set t ~if_phys_equal_to:before ~replace_with:after with
@@ -51,7 +51,7 @@ let rec poison_and_raise t exn bt =
   | Poisoned _ -> raise Poisoned
 ;;
 
-let make value = Awaitable.make (Value { value; wait = false })
+let make ?padded value = Awaitable.make ?padded (Value { value; wait = false })
 let[@inline] get t = value_of (Awaitable.get t)
 
 type op =

@@ -3,7 +3,7 @@ open Basement
 open Await_kernel
 open Await_sync_intf
 
-(* The underlying state machine of an mvar:
+(*=The underlying state machine of an mvar:
 
                                                     [create_full]
                   +--[set]-----------------------------+  |
@@ -30,7 +30,7 @@ open Await_sync_intf
 
 module State : sig @@ portable
   type !'a t : immutable_data with 'a @@ contended portable
-  (* = | Empty
+  (*== | Empty
        | Readers
        | Value of 'a @@ contended portable *)
 
@@ -73,8 +73,8 @@ end
 
 type 'a t = 'a State.t Awaitable.t
 
-let create () = Awaitable.make State.empty
-let create_full v = Awaitable.make (State.of_value v)
+let create ?padded () = Awaitable.make ?padded State.empty
+let create_full ?padded v = Awaitable.make ?padded (State.of_value v)
 
 type ('a, 'r) result =
   | Value : ('a, 'a) result
@@ -151,7 +151,7 @@ let take_as (type a r) w c (t : a t) (r : (a, r) result) : r =
        with
        | Set_here ->
          (* Note: we unconditionally broadcast here since the state representation doesn't
-         differentiate between "full" and "full, with waiting putters". *)
+            differentiate between "full" and "full, with waiting putters". *)
          Awaitable.broadcast t;
          (match r with
           | Value -> v
@@ -206,7 +206,7 @@ let try_take t =
        with
        | Set_here ->
          (* Note: we unconditionally broadcast here since the state representation doesn't
-           differentiate between "full" and "full, with waiting putters". *)
+            differentiate between "full" and "full, with waiting putters". *)
          Awaitable.broadcast t;
          This v
        | Compare_failed -> go (Backoff.once backoff))

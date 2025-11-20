@@ -14,6 +14,7 @@ depends: [
   "async"
   "base"
   "basement"
+  "capsule"
   "core"
   "oxcaml_effect"
   "portable"

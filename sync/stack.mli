@@ -6,13 +6,16 @@ open Base
 open Await_kernel
 
 (** A simple, list-based multi-producer multi-consumer stack which provides both lock-free
-    and blocking operations *)
+    and blocking operations. *)
 type !'a t : value mod contended portable
 
 [%%rederive: type nonrec ('a : value mod contended) t = 'a t [@@deriving sexp_of]]
 
-(** [create ()] creates and returns a new empty stack *)
-val create : unit -> 'a t
+(** [create ()] creates and returns a new empty stack.
+
+    The optional [padded] argument specifies whether to pad the data structure to avoid
+    false sharing. See {!Atomic.make} for a longer explanation. *)
+val create : ?padded:bool @ local -> unit -> 'a t
 
 (** [push t a] enqueues [a] at the head of [t]. *)
 val push : 'a t @ local -> 'a @ contended portable -> unit
@@ -36,7 +39,7 @@ val pop_or_cancel
 val pop_nonblocking : 'a t @ local -> 'a or_null @ contended portable
 
 (** [drain t] removes and returns all items from [t] without blocking, returning a list
-    with the most-recently-enqueued item first *)
+    with the most-recently-enqueued item first. *)
 val drain : 'a t @ local -> 'a list @ contended portable
 
 module For_testing : sig

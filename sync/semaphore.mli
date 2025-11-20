@@ -22,9 +22,12 @@ val max_value : int
 
 (** [create n] creates a new counting semaphore with the given count [n].
 
+    The optional [padded] argument specifies whether to pad the data structure to avoid
+    false sharing. See {!Atomic.make} for a longer explanation.
+
     @raise Invalid_argument
       in case the given count is negative or higher than {!max_value}. *)
-val create : int -> t
+val create : ?padded:bool @ local -> int -> t
 
 (** [release t] increments the count of the semaphore or does nothing in case the
     semaphore has been {{!poison} poisoned}.

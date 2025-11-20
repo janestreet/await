@@ -65,6 +65,14 @@ type 'a inner =
 type 'a t = { inner : 'a inner @@ contended global portable } [@@unboxed]
 
 let terminator { inner = { terminator; _ } } = terminator
+
+let terminate t =
+  Terminator.Source.terminate
+    (Terminator.source (terminator t)
+     (* Scopes always have a terminatable terminator *)
+     |> Or_null.value_exn)
+;;
+
 let context { inner = { context; _ } } = context
 
 let raised { inner = { terminator; _ } as inner } exn bt =
@@ -104,9 +112,9 @@ module Task_handle = struct
 end
 
 module Token = struct
-  type nonrec 'a t = 'a t aliased
+  type nonrec 'a t = 'a t aliased many
 
-  let use { aliased = t } ~f =
+  let use { many = { aliased = t } } ~f =
     let task_handle = stack_ { Task_handle.scope = t; am_daemon = false } in
     let[@inline] finish () =
       if task_handle.am_daemon then Live.decr (daemons t) else Live.decr (tasks t)
@@ -121,14 +129,14 @@ module Token = struct
       finish () [@nontail]
   ;;
 
-  let drop { aliased = t } = Live.decr (tasks t)
+  let drop { many = { aliased = t } } = Live.decr (tasks t)
 end
 
 let globalize { inner } = { inner }
 
 let add (t @ local) : _ Token.t @ unique =
   Live.incr (tasks t);
-  { aliased = globalize t }
+  { many = { aliased = globalize t } }
 ;;
 
 let failure t = Atomic.Loc.get [%atomic.loc t.inner.failure]

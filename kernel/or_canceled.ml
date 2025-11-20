@@ -8,6 +8,7 @@ type%template ('a : k) t =
   = ( value_or_null
     , void
     , value_or_null & void
+    , value_or_null & value_or_null
     , (value_or_null & value_or_null) & value_or_null )]
 [@@deriving
   compare ~localize, equal ~localize, globalize, sexp ~stackify, sexp_grammar, hash]
@@ -22,6 +23,7 @@ let%template[@inline] completed_exn : (_ t[@kind k]) -> _ = function
   = ( value_or_null
     , void
     , value_or_null & void
+    , value_or_null & value_or_null
     , (value_or_null & value_or_null) & value_or_null )]
 ;;
 
@@ -37,3 +39,8 @@ include Monad.Make [@mode local] [@modality portable] (struct
       | Completed a -> f a
     ;;
   end)
+
+let never_completed = function
+  | Canceled -> ()
+  | Completed (_ : Nothing.t) -> .
+;;

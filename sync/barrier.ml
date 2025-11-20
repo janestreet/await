@@ -45,8 +45,8 @@ end = struct
 
   (* The state looks like this:
 
-       Bit: [   0   | 1 to n/2-1 | n/2 to n-2 |    n-1   ]
-       Use: [ sense |  parties   |  awaiting  | poisoned ]
+     Bit: [   0   | 1 to n/2-1 | n/2 to n-2 |    n-1   ] Use:
+     [ sense |  parties   |  awaiting  | poisoned ]
 
      [awaiting] is the number of [parties] still being awaited for by or to arrive at the
      barrier. It starts equal to [parties], then counts down to 0.
@@ -129,9 +129,9 @@ type t = State.t Awaitable.t
 
 let max_parties = State.max_parties
 
-let create parties =
+let create ?padded parties =
   if 0 < parties && parties <= max_parties
-  then Awaitable.make (State.from_parties parties)
+  then Awaitable.make ?padded (State.from_parties parties)
   else invalid_arg "Barrier.create: invalid number of parties"
 ;;
 
@@ -158,8 +158,8 @@ let await_as (type r) ~awt ~ct t (r : (unit, r) result) : r =
   (* The main idea of this barrier algorithm is to optimistically use [fetch_and_add].
 
      All threads except the last one to arrive perform only a single update of the atomic
-     barrier state.  This should minimize contention.  (A tree based barrier would have
-     even less contention, but would take more memory.)
+     barrier state. This should minimize contention. (A tree based barrier would have even
+     less contention, but would take more memory.)
 
      The last thread to arrive does another update to reset the barrier state, which also
      reverse the "sense" of the barrier, and signals, or broadcasts, to wake up all the

@@ -1,7 +1,7 @@
 open Base
 open Await_kernel
 open Basement
-open Blocking_sync [@@alert "-deprecated"]
+open Capsule.Blocking_sync [@@alert "-deprecated"]
 
 module Context = struct
   (* We allocate [mutex] and [condition] lazily to make [with_await] as low overhead as
@@ -14,7 +14,7 @@ module Context = struct
           -> inner
 
   let create_inner () =
-    let (P key) = Capsule.create () in
+    let (P key) = Capsule.Expert.create () in
     let mutex = Mutex.create key in
     let condition = Condition.create () in
     let inner = T { mutex; condition } in

@@ -2,8 +2,8 @@
 
 (** A poisonable mutual exclusion lock. *)
 
-open Basement
 open Await_kernel
+module Capsule := Capsule.Expert
 
 (** {1 Creating a mutex} *)
 
@@ -11,8 +11,11 @@ open Await_kernel
 type 'k t : value mod contended portable
 
 (** [create k] creates a new mutex for the capsule ['k] associated with [k], consuming the
-    key itself. *)
-val create : 'k Capsule.Key.t @ unique -> 'k t
+    key itself.
+
+    The optional [padded] argument specifies whether to pad the data structure to avoid
+    false sharing. See {!Atomic.make} for a longer explanation. *)
+val create : ?padded:bool @ local -> 'k Capsule.Key.t @ unique -> 'k t
 
 (** {1 Executing critical sections} *)
 
@@ -129,6 +132,9 @@ val with_password_or_cancel_poisoning
 
 (** {2 With a unique [Key]} *)
 
+[%%template:
+[@@@alloc.default a @ l = (heap_global, stack_local)]
+
 (** [with_key t ~f] locks [t] and runs [f], providing it a key for ['k] uniquely. If [t]
     is locked, then [with_key] uses [w] to wait until it is unlocked.
 
@@ -138,8 +144,9 @@ val with_key
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a @ once unique
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a @ l once unique
 
 (** [with_key_poisoning t ~f] locks [t] and runs [f], providing it a key for ['k]
     uniquely. If the function raises without returning the key back, the mutex is
@@ -152,8 +159,9 @@ val with_key_poisoning
   : ('a : value_or_null) 'k.
   Await.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a @ once unique
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a @ l once unique
 
 (** [with_key_or_cancel w c t ~f] is [Completed (with_key w t ~f)] if [c] is not canceled,
     otherwise it is [Canceled].
@@ -164,8 +172,9 @@ val with_key_or_cancel
   Await.t @ local
   -> Cancellation.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a Or_canceled.t @ once unique
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a Or_canceled.t @ l once unique
 
 (** [with_key_or_cancel_poisoning w c t ~f] is [Completed (with_key_poisoning w t ~f)] if
     [c] is not canceled, otherwise it is [Canceled].
@@ -176,8 +185,9 @@ val with_key_or_cancel_poisoning
   Await.t @ local
   -> Cancellation.t @ local
   -> 'k t @ local
-  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique) @ local once
-  -> 'a Or_canceled.t @ once unique
+  -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+     @ local once
+  -> 'a Or_canceled.t @ l once unique]
 
 (** {3 And waiting for a [Condition]} *)
 

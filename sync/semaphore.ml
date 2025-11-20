@@ -94,8 +94,7 @@ module State : sig @@ portable
 end = struct
   (* The state looks like this:
 
-       Bit: [      0      |   1  to  n-1   ]
-       Use: [ no_awaiters | (signed) value ]
+     Bit: [      0      |   1  to  n-1   ] Use: [ no_awaiters | (signed) value ]
 
      The value is treated as signed, but operations will normalize it to be non-negative
      unless the value is less than [-poisoned_abs / 2], which is taken to mean that the
@@ -141,9 +140,9 @@ type t = State.t Awaitable.t
 
 let max_value = State.max_value
 
-let create n =
+let create ?padded n =
   if 0 <= n && n <= max_value
-  then Awaitable.make (State.from_value ~n)
+  then Awaitable.make ?padded (State.from_value ~n)
   else invalid_arg "Semaphore.create: invalid initial count"
 ;;
 
@@ -286,7 +285,7 @@ let rec poison t =
 let get_value t =
   let n = State.value (Awaitable.get t) in
   (* We must clamp the value [n] as we are using [fetch_and_add], which can temporarily
-     make the value be out of bounds.  Poisoning also makes the value negative. *)
+     make the value be out of bounds. Poisoning also makes the value negative. *)
   if 0 <= n then if n < max_value then n else max_value else 0
 ;;
 

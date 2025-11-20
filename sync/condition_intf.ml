@@ -1,4 +1,3 @@
-open Basement
 open Await_kernel
 
 module type Condition = sig
@@ -11,8 +10,11 @@ module type Condition = sig
   type 'k t : value mod contended portable
 
   (** [create ()] creates a new condition variable associated with the matching ['k lock]
-      and with a certain property {i P} that is protected by the lock. *)
-  val create : unit -> 'k t
+      and with a certain property {i P} that is protected by the lock.
+
+      The optional [padded] argument specifies whether to pad the data structure to avoid
+      false sharing. See {!Atomic.make} for a longer explanation. *)
+  val create : ?padded:bool @ local -> unit -> 'k t
 
   (** [wait w t ~lock key] atomically releases the [lock] and blocks on the condition
       variable [t]. To ensure exception safety, it takes hold of the ['k Key.t] associated
@@ -30,8 +32,8 @@ module type Condition = sig
     :  Await.t @ local
     -> 'k t @ local
     -> lock:'k lock @ local
-    -> 'k Capsule.Key.t @ unique
-    -> 'k Capsule.Key.t @ unique
+    -> 'k Capsule.Expert.Key.t @ unique
+    -> 'k Capsule.Expert.Key.t @ unique
 
   (** [signal t] wakes up one waiter on the condition variable [t], if there is one. If
       there is none, this call has no effect. It is recommended to call [signal t] after a

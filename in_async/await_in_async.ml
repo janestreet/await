@@ -53,7 +53,7 @@ module Expert = struct
   let with_await terminator ~f =
     let terminator = Terminator.Expert.globalize terminator in
     Eff.handle
-      ((Eff.run [@alert "-experimental"]) (fun handler ->
+      ((Eff.run [@alert "-experimental_runtime5"]) (fun handler ->
          let handler = (Capsule.Initial.Data.wrap [@mode local]) handler in
          Await.with_ ~terminator ~await ~yield:(This yield) handler ~f [@nontail]))
   ;;
