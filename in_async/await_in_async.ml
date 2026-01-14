@@ -1,6 +1,4 @@
-module Effect_ = Effect
 open Core
-module Effect = Effect_
 open Async
 open Await_kernel
 open Portable
@@ -8,7 +6,7 @@ open Portable
 type 'a op = Await : Trigger.t -> unit op [@@unboxed]
 
 module Eff = struct
-  include Effect.Make (struct
+  include Handled_effect.Make (struct
       type 'a t = 'a op
     end)
 
@@ -17,7 +15,7 @@ module Eff = struct
     | Exception e -> raise e
     | Operation (op, k) -> await op k
 
-  and await : type t. t op -> (t, _, _) Effect.Continuation.t @ unique -> _ =
+  and await : type t. t op -> (t, _, _) Handled_effect.Continuation.t @ unique -> _ =
     fun (Await trigger) k ->
     let k = Capsule.Expert.(Data.wrap_unique ~access:(Access.unbox initial)) k in
     let continue = Capsule.Initial.Data.wrap continue in
@@ -29,10 +27,10 @@ module Eff = struct
     | Null -> ()
     | This k ->
       let k = Capsule.Expert.(Data.unwrap_unique ~access:(Access.unbox initial)) k in
-      handle (Effect.continue k () [])
+      handle (Handled_effect.continue k () [])
 
-  and continue : #(_ * (unit, _, _) Effect.Continuation.t) @ unique -> _ =
-    fun #(_, k) -> handle (Effect.continue k () [])
+  and continue : #(_ * (unit, _, _) Handled_effect.Continuation.t) @ unique -> _ =
+    fun #(_, k) -> handle (Handled_effect.continue k () [])
   ;;
 end
 
@@ -50,12 +48,14 @@ let yield handler =
 ;;
 
 module Expert = struct
-  let with_await terminator ~f =
+  let with_await terminator ~(f : _ @ local -> unit) =
     let terminator = Terminator.Expert.globalize terminator in
     Eff.handle
       ((Eff.run [@alert "-experimental_runtime5"]) (fun handler ->
          let handler = (Capsule.Initial.Data.wrap [@mode local]) handler in
-         Await.with_ ~terminator ~await ~yield:(This yield) handler ~f [@nontail]))
+         Await.with_ ~terminator ~await ~yield:(This yield) handler ~f:(fun [@inline] w ->
+           (f [@inlined hint]) w [@nontail])
+         [@nontail]))
   ;;
 
   let with_yield ~f =

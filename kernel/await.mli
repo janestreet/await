@@ -21,8 +21,19 @@ val with_
   -> yield:('c @ local -> unit) or_null @ local
   -> await:('c @ local -> Trigger.t -> unit) @ local
   -> 'c @ local
-  -> f:(t @ local -> 'r) @ local once
-  -> 'r
+  -> f:(t @ local -> 'r @ forkable local once unique) @ local once
+  -> 'r @ forkable local once unique
+
+(** [create_global ~terminator ~yield ~await c] creates a global awaiter with [yield c] as
+    its implementation of [yield] and [await c] as its implementation of [await]. Both
+    [yield] and [await] must be portable as the returned [Await.t] is not local, allowing
+    it to escape to other capsules. *)
+val create_global
+  :  terminator:Terminator.t
+  -> yield:('c @ contended portable -> unit) or_null @ portable
+  -> await:('c @ contended portable -> Trigger.t -> unit) @ portable
+  -> 'c @ contended portable
+  -> t
 
 (** [terminator t] is the terminator associated with [t]. Awaiting operations should
     attempt to cancel themselves if they have been terminated, raising [Terminated] if
@@ -102,5 +113,8 @@ module For_testing : sig
       Bear in mind that proper implementations of [await] do not usually raise and are not
       documented to potentially raise. This means that abstractions built on await may
       e.g. leave the program in an invalid state when using [with_never]. *)
-  val with_never : ('r : value_or_null). f:(t @ local -> 'r) @ local once -> 'r
+  val with_never
+    : ('r : value_or_null).
+    f:(t @ local -> 'r @ forkable local once unique) @ local once
+    -> 'r @ forkable local once unique
 end

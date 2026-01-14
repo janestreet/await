@@ -1,69 +1,55 @@
 open Base
 open Await_kernel
-open Basement
-open Capsule.Blocking_sync [@@alert "-deprecated"]
+open Capsule_blocking_sync [@@alert "-deprecated"]
 
-module Context = struct
-  (* We allocate [mutex] and [condition] lazily to make [with_await] as low overhead as
-     possible. Sometimes they are not needed as nothing actually needs to block. *)
-    type%fuelproof inner : value mod contended portable =
-      | T :
-          { mutex : 'k Mutex.t
-          ; condition : 'k Condition.t
-          }
-          -> inner
+module Futex = struct
+  (** A handle to a linux futex for waiting on a trigger. *)
+  type t : immediate
 
-  let create_inner () =
-    let (P key) = Capsule.Expert.create () in
-    let mutex = Mutex.create key in
-    let condition = Condition.create () in
-    let inner = T { mutex; condition } in
-    inner
-  ;;
+  type count : immediate
 
-  type t = { mutable inner : inner or_null }
+  (** Returns a futex for waiting on a trigger. A new futex may or may not be returned
+      each time this is called. *)
+  external get : unit -> t @@ portable = "await_blocking_futex_get"
+  [@@noalloc]
 
-  let create () = exclave_ { inner = Null }
+  (** Returns the current count of the futex. *)
+  external count : t -> count @@ portable = "await_blocking_futex_count"
+  [@@noalloc]
+
+  (** Increments the count of the futex and makes sure that any call to [wait] on the same
+      futex will check whether the associated trigger has been signaled before suspending
+      the thread of control. *)
+  external signal : t -> unit @@ portable = "await_blocking_futex_signal"
+  [@@noalloc]
+
+  (** Wait until the count of the futex has changed using the futex to suspend the thread
+      until the futex is [signal]ed and return the current count. *)
+  external wait : t -> count:count -> count @@ portable = "await_blocking_futex_wait"
 end
 
-type t = { context : Context.inner @@ aliased global many } [@@unboxed]
-
-let wakeup { context = T { mutex; condition } } =
-  (try Mutex.with_lock mutex ~f:(fun _ -> ()) with
-   | Mutex.Poisoned | Sys_error _ -> ());
-  Condition.broadcast condition
-;;
-
-module TLS = Stdlib_shim.Domain.Safe.TLS
-
-let inner_key = TLS.new_key Context.create_inner
-
-let await (context : Context.t) trigger =
-  let context =
-    match context.inner with
-    | Null ->
-      let inner = TLS.get inner_key in
-      context.inner <- This inner;
-      inner
-    | This inner -> inner
-  in
-  let (T { mutex; condition }) = context in
-  match Trigger.on_signal trigger ~f:wakeup { context } with
+let await () trigger =
+  let futex = Futex.get () in
+  match Trigger.on_signal trigger ~f:[%eta1 Futex.signal] futex with
   | Null ->
-    let rec wait key =
-      if Trigger.is_signalled trigger
-      then #((), key)
-      else (
-        let key = Condition.wait condition ~mutex key in
-        wait key)
+    let[@inline] rec loop count =
+      if not (Trigger.is_signalled trigger)
+      then
+        (* We might spuriously wakeup even if [Futex.signal] has not been called, so we
+           need to loop around again to check. *)
+        loop (Futex.wait futex ~count)
     in
-    Mutex.with_key mutex ~f:wait [@nontail]
-  | This _ -> ()
+    loop (Futex.count futex)
+  | This _ ->
+    (* One way we might get here is if:
+
+       1. we decide we want to wait on a trigger
+       2. some other thread signals the trigger
+       3. we enter [await], [get] the futex, then try to register the action for the
+          trigger.
+    *)
+    ()
 ;;
 
 let yield _ = yield ()
-
-let with_await terminator ~f =
-  let context = Context.create () in
-  Await.with_ ~terminator ~await ~yield:(This yield) context ~f [@nontail]
-;;
+let await terminator = Await.create_global ~terminator ~await ~yield:(This yield) ()

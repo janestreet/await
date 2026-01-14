@@ -44,3 +44,21 @@ let never_completed = function
   | Canceled -> ()
   | Completed (_ : Nothing.t) -> .
 ;;
+
+module Exn = struct
+  exception Canceled
+
+  let%template[@inline] catch (f @ local once) : (_ t[@kind k]) @ u =
+    match f () with
+    | value -> Completed value
+    | exception Canceled -> Canceled
+  [@@kind
+    k
+    = ( value_or_null
+      , void
+      , value_or_null & void
+      , value_or_null & value_or_null
+      , (value_or_null & value_or_null) & value_or_null )]
+  [@@mode u = (aliased, unique)]
+  ;;
+end

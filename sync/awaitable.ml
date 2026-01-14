@@ -130,7 +130,7 @@ let[@inline] set t value =
 let[@inline] incr t = ignore (fetch_and_add t 1 : int)
 let[@inline] decr t = ignore (fetch_and_add t (-1) : int)
 
-let[@inline] update_and_return t ~pure_f =
+let[@inline] get_and_update t ~pure_f =
   let[@inline] rec aux backoff =
     let old = get t in
     let new_ = pure_f old in
@@ -142,7 +142,7 @@ let[@inline] update_and_return t ~pure_f =
 ;;
 
 let[@inline] update (type a : value_or_null) (t : a t) ~pure_f =
-  Basement.Stdlib_shim.ignore_contended (update_and_return t ~pure_f : a)
+  Basement.Stdlib_shim.ignore_contended (get_and_update t ~pure_f : a)
 ;;
 
 type _ await =

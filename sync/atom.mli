@@ -51,9 +51,9 @@ val update
   -> pure_f:('a @ contended portable -> 'a @ contended portable) @ portable
   -> unit
 
-(** [update_and_return t ~pure_f] is like [update t ~pure_f], but also returns the old
-    value of the atom. *)
-val update_and_return
+(** [get_and_update t ~pure_f] is like [update t ~pure_f], but also returns the old value
+    of the atom. *)
+val get_and_update
   :  'a t @ local
   -> pure_f:('a @ contended portable -> 'a @ contended portable) @ portable
   -> 'a @ contended portable

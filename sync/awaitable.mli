@@ -71,10 +71,10 @@ val update
   -> pure_f:('a @ contended portable -> 'a @ contended portable) @ local
   -> unit
 
-(** [update_and_return t ~pure_f] atomically updates [t] to be the result of
+(** [get_and_update t ~pure_f] atomically updates [t] to be the result of
     [pure_f (get t)]. [pure_f] may be called multiple times, so should be free of side
     effects. Returns the old value. *)
-val update_and_return
+val get_and_update
   : ('a : value_or_null).
   'a t @ local
   -> pure_f:('a @ contended portable -> 'a @ contended portable) @ local

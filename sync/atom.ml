@@ -114,7 +114,7 @@ and finish_and_update_contended t pure_f backoff before =
   update_contended t pure_f backoff
 ;;
 
-let update_and_return t ~pure_f =
+let get_and_update t ~pure_f =
   match Awaitable.get t with
   | Value before_r as before ->
     (match pure_f before_r.value with
@@ -139,7 +139,7 @@ let update_and_return t ~pure_f =
 ;;
 
 let[@inline] update t ~pure_f =
-  let _ : _ = update_and_return t ~pure_f in
+  let _ : _ = get_and_update t ~pure_f in
   ()
 ;;
 
