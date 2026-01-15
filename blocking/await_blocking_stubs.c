@@ -2,8 +2,17 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <unistd.h>
+
+#ifdef __APPLE__
+// macOS ulock API declarations (private but stable API used by libc++)
+#define UL_COMPARE_AND_WAIT 1
+#define ULF_WAKE_ALL 0x00000100
+extern int __ulock_wait(uint32_t operation, void *addr, uint64_t value, uint32_t timeout);
+extern int __ulock_wake(uint32_t operation, void *addr, uint64_t wake_value);
+#else
 #include <sys/syscall.h>
 #include <linux/futex.h>
+#endif
 
 #include "caml/version.h"
 #include "caml/memory.h"
@@ -58,7 +67,11 @@ CAMLprim value await_blocking_futex_wait(value v_futex /* immediate */,
   _Atomic uint32_t *futex = Futex_val(v_futex);
 
   caml_enter_blocking_section();
+#ifdef __APPLE__
+  __ulock_wait(UL_COMPARE_AND_WAIT, futex, Int_val(v_count), 0);
+#else
   syscall(SYS_futex, futex, FUTEX_WAIT_PRIVATE, Int_val(v_count), NULL);
+#endif
   caml_leave_blocking_section();
 
   CAMLreturn(Val_int(atomic_load_explicit(futex, memory_order_acquire)));
@@ -76,7 +89,11 @@ CAMLprim value await_blocking_futex_signal(value v_futex /* immediate */) {
   // When using a futex per thread there should be at most one thread blocked on a futex,
   // but we broadcast anyway, because it should not slow things down and allows the
   // approach to work even with a shared futex.
+#ifdef __APPLE__
+  __ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, futex, 0);
+#else
   syscall(SYS_futex, futex, FUTEX_WAKE_PRIVATE, INT_MAX /* broadcast */);
+#endif
 
   CAMLreturn(Val_unit);
 }
