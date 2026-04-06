@@ -16,13 +16,21 @@ open Await_kernel
     spawned into it and close the scope. This way error handling becomes simpler as one
     doesn't have to otherwise explicitly arrange for termination of siblings and children
     in case of unhandled errors. *)
-type !'a t : value mod contended portable
+type !'a
+     t :
+     value
+     mod contended non_float portable unforkable unyielding
+     with 'a @@ contended portable
 
 (** [with_ await context ~f] calls [f scope] with a new scope for concurrency and does not
     return until all the tasks added to the scope have exited. An uncaught exception from
     [f] or any task added to the scope will terminate all of the tasks and the exception
     will then be raised out of [with_] after all of the tasks have exited. *)
-val with_ : Await.t @ local -> 'a @ portable -> f:('a t @ local -> 'b) @ local once -> 'b
+val with_
+  :  Await.t @ local
+  -> 'a @ portable
+  -> f:(Await.t @ local -> 'a t @ local -> 'b) @ local once unyielding
+  -> 'b
 
 module Global : sig
   (** Allows creating non-local scopes for performing unstructured concurrency. *)

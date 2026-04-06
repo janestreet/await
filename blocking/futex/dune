@@ -1,0 +1,13 @@
+(library
+ (foreign_stubs
+  (language c)
+  (names await_blocking_futex_stubs))
+ (name await_blocking_futex)
+ (public_name await.blocking_futex)
+ (js_of_ocaml
+  (javascript_files await_blocking_futex.js))
+ (preprocess
+  (pps ppx_jane -compare-require-explicit-locality))
+ (wasm_of_ocaml
+  (javascript_files await_blocking_futex.js)
+  (wasm_files await_blocking_futex.wat)))

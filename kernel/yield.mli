@@ -6,10 +6,10 @@
 
     Internally, a {!Yield.t} is just an {!Await.t}, but code which only yields and does
     not block can take a {!Yield.t} as a parameter to promise that it will not block. *)
-type t : value mod contended portable
+type t : value mod contended non_float portable
 
-(** [of_await await] is an implementation of yielding based on [await] *)
-val of_await : Await.t @ local -> t @ local
+(** [of_sync sync] is an implementation of yielding based on [sync] *)
+val of_sync : Sync.t @ local -> t @ local
 
 (** [yield t] uses [t] to yield to the scheduler *)
 val yield : t @ local -> unit

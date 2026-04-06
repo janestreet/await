@@ -29,7 +29,7 @@ open Await_kernel
     different times and there is actually no or very little contention. *)
 
 (** Represents a poisonable barrier. *)
-type t : value mod contended portable
+type t : value mod contended non_float portable
 
 (** Maximum number of participants that a barrier can be configured with. *)
 val max_parties : int

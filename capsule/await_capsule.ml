@@ -1,147 +1,772 @@
 open! Base
-open Portable_kernel
-open Await_sync
-include Await_capsule_intf.Definitions
+open Import
+include Await_capsule_intf
 include Capsule
 
-module Mutex = struct
-  type 'k t = 'k Mutex.t
-  type packed = P : 'k t -> packed
+module Sync = struct
+  include Definitions (Sync)
 
-  let create () =
-    let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
-    P (Mutex.create key)
-  ;;
+  module Mutex = struct
+    type 'k t = 'k Sync.Mutex.t
+    type packed = P : 'k t -> packed
 
-  let create_m () : (module Module_with_mutex) =
-    let (P (type k) (t : k t)) = create () in
-    (module struct
-      type nonrec k = k
+    let create () =
+      let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
+      P (Sync.Mutex.create key)
+    ;;
 
-      let mutex = t
-    end)
-  ;;
+    let create_m () : (module Module_with_mutex) =
+      let (P (type k) (t : k t)) = create () in
+      (module struct
+        type nonrec k = k
 
-  module Create () = (val create_m ())
+        let mutex = t
+      end)
+    ;;
 
-  let[@inline] with_lock (await @ local) t ~f =
-    (Mutex.with_access await t ~f:(fun access ->
-       { global = { aliased = { many = f access } } }))
-      .global
-      .aliased
-      .many
-  ;;
-end
+    module Create () = (val create_m ())
 
-module With_mutex = struct
-  type ('a, 'k) inner : value mod contended portable =
-    { data : ('a, 'k) Capsule.Data.t
-    ; mutex : 'k Mutex.t
-    }
+    let[@inline] with_lock s t ~f =
+      (Sync.Mutex.with_access s t ~f:(fun s access ->
+         { global = { aliased_many = f s access } }))
+        .global
+        .aliased_many
+    ;;
 
-  type 'a t : value mod contended portable = P : ('a, 'k) inner -> 'a t [@@unboxed]
+    let[@inline] with_lock_or_cancel s c t ~f : _ Await_kernel.Or_canceled.t =
+      match
+        Sync.Mutex.with_access_or_cancel s c t ~f:(fun s access ->
+          { global = { aliased_many = f s access } })
+      with
+      | Completed { global = { aliased_many = res } } -> Completed res
+      | Canceled -> Canceled
+    ;;
 
-  let create f =
-    let (P mutex) = Mutex.create () in
-    let data = Capsule.Data.create f in
-    P { data; mutex }
-  ;;
+    module Poisoning = struct
+      let[@inline] with_lock s t ~f =
+        (Sync.Mutex.with_access_poisoning s t ~f:(fun s access ->
+           { global = { aliased_many = f s access } }))
+          .global
+          .aliased_many
+      ;;
 
-  let of_isolated (Capsule.Isolated.P #{ key; data }) =
-    let mutex = Await_sync.Mutex.create key in
-    P { mutex; data }
-  ;;
+      let[@inline] with_lock_or_cancel s c t ~f : _ Await_kernel.Or_canceled.t =
+        match
+          Sync.Mutex.with_access_or_cancel_poisoning s c t ~f:(fun s access ->
+            { global = { aliased_many = f s access } })
+        with
+        | Completed { global = { aliased_many = res } } -> Completed res
+        | Canceled -> Canceled
+      ;;
+    end
 
-  let with_lock await (P { mutex; data }) ~f =
-    Mutex.with_lock await mutex ~f:(fun access -> f (Capsule.Data.unwrap ~access data))
-    [@nontail]
-  ;;
+    module Expert = Sync.Mutex
+  end
 
-  let iter = with_lock
+  module With_mutex = struct
+    type 'a t =
+      | P :
+          { data : ('a, 'k) Capsule.Data.t
+          ; mutex : 'k Mutex.t
+          }
+          -> 'a t
 
-  let map await (P { mutex; data }) ~f =
-    let data =
-      (Mutex.with_lock await mutex ~f:(fun access ->
-         { aliased = Capsule.Data.wrap ~access (f (Capsule.Data.unwrap ~access data)) }))
+    let create f =
+      let (P mutex) = Mutex.create () in
+      let data = Capsule.Data.create f in
+      P { data; mutex }
+    ;;
+
+    let of_isolated (Capsule.Isolated.P #{ key; data }) =
+      let mutex = Sync.Mutex.create key in
+      P { mutex; data }
+    ;;
+
+    let with_lock s (P { mutex; data }) ~f =
+      Mutex.with_lock s mutex ~f:(fun s access -> f s (Capsule.Data.unwrap ~access data))
+      [@nontail]
+    ;;
+
+    let with_lock_or_cancel s c (P { mutex; data }) ~f =
+      Mutex.with_lock_or_cancel s c mutex ~f:(fun s access ->
+        f s (Capsule.Data.unwrap ~access data))
+      [@nontail]
+    ;;
+
+    let with_guard s (P { mutex; data }) ~f =
+      (Mutex.Expert.with_password s mutex ~f:(fun sync password ->
+         { aliased_many = f sync (Guard.P #{ data; password }) }))
+        .aliased_many
+    ;;
+
+    let with_guard_or_cancel s c (P { mutex; data }) ~f : _ Await_kernel.Or_canceled.t =
+      match
+        Mutex.Expert.with_password_or_cancel s c mutex ~f:(fun sync password ->
+          { aliased_many = f sync (Guard.P #{ data; password }) })
+      with
+      | Completed { aliased_many = res } -> Completed res
+      | Canceled -> Canceled
+    ;;
+
+    module Poisoning = struct
+      let with_lock s (P { mutex; data }) ~f =
+        Mutex.Poisoning.with_lock s mutex ~f:(fun s access ->
+          f s (Capsule.Data.unwrap ~access data))
+        [@nontail]
+      ;;
+
+      let with_lock_or_cancel s c (P { mutex; data }) ~f =
+        Mutex.Poisoning.with_lock_or_cancel s c mutex ~f:(fun s access ->
+          f s (Capsule.Data.unwrap ~access data))
+        [@nontail]
+      ;;
+    end
+
+    let iter = with_lock
+
+    let map s (P { mutex; data }) ~f =
+      let data =
+        (Mutex.with_lock s mutex ~f:(fun s access ->
+           { aliased = Capsule.Data.wrap ~access (f s (Capsule.Data.unwrap ~access data))
+           }))
+          .aliased
+      in
+      P { mutex; data }
+    ;;
+
+    let destroy s (P { mutex; data }) =
+      let key = Sync.Mutex.acquire_and_poison s mutex in
+      let access = Capsule.Expert.Key.destroy key in
+      Capsule.Expert.Data.unwrap data ~access
+    ;;
+  end
+
+  module Rwlock = struct
+    type 'k t = 'k Sync.Rwlock.t
+    type packed = P : 'k t -> packed
+
+    let create () =
+      let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
+      P (Sync.Rwlock.create key)
+    ;;
+
+    let create_m () : (module Module_with_rwlock) =
+      let (P (type k) (t : k t)) = create () in
+      (module struct
+        type nonrec k = k
+
+        let rwlock = t
+      end)
+    ;;
+
+    module Create () = (val create_m ())
+
+    let[@inline] with_write s t ~f =
+      (Sync.Rwlock.with_access s t ~f:(fun s access ->
+         { global = { aliased = { many = f s access } } }))
+        .global
         .aliased
-    in
-    P { mutex; data }
-  ;;
+        .many
+    ;;
 
-  let destroy await (P { mutex; data }) =
-    let key = Await_sync.Mutex.acquire_and_poison await mutex in
-    let access = Capsule.Expert.Key.destroy key in
-    Capsule.Expert.Data.unwrap data ~access
-  ;;
+    let[@inline] with_write_or_cancel s c t ~f : _ Await_kernel.Or_canceled.t =
+      match
+        Sync.Rwlock.with_access_or_cancel s c t ~f:(fun s access ->
+          { global = { aliased = { many = f s access } } })
+      with
+      | Completed { global = { aliased = { many = res } } } -> Completed res
+      | Canceled -> Canceled
+    ;;
+
+    let[@inline] with_read s t ~f =
+      (Sync.Rwlock.with_access_shared s t ~f:(fun s access ->
+         { global = { aliased = { many = f s access } } }))
+        .global
+        .aliased
+        .many
+    ;;
+
+    let[@inline] with_read_or_cancel s c t ~f : _ Await_kernel.Or_canceled.t =
+      match
+        Sync.Rwlock.with_access_shared_or_cancel s c t ~f:(fun s access ->
+          { global = { aliased = { many = f s access } } })
+      with
+      | Completed { global = { aliased = { many = res } } } -> Completed res
+      | Canceled -> Canceled
+    ;;
+
+    module Poisoning = struct
+      let[@inline] with_write s t ~f =
+        (Sync.Rwlock.with_access_poisoning s t ~f:(fun s access ->
+           { global = { aliased = { many = f s access } } }))
+          .global
+          .aliased
+          .many
+      ;;
+
+      let[@inline] with_write_or_cancel s c t ~f : _ Await_kernel.Or_canceled.t =
+        match
+          Sync.Rwlock.with_access_or_cancel_poisoning s c t ~f:(fun s access ->
+            { global = { aliased = { many = f s access } } })
+        with
+        | Completed { global = { aliased = { many = res } } } -> Completed res
+        | Canceled -> Canceled
+      ;;
+
+      let[@inline] with_read s t ~f =
+        (Sync.Rwlock.with_access_shared_freezing s t ~f:(fun s access ->
+           { global = { aliased = { many = f s access } } }))
+          .global
+          .aliased
+          .many
+      ;;
+
+      let[@inline] with_read_or_cancel s c t ~f : _ Await_kernel.Or_canceled.t =
+        match
+          Sync.Rwlock.with_access_shared_or_cancel_freezing s c t ~f:(fun s access ->
+            { global = { aliased = { many = f s access } } })
+        with
+        | Completed { global = { aliased = { many = res } } } -> Completed res
+        | Canceled -> Canceled
+      ;;
+    end
+
+    module Expert = Sync.Rwlock
+  end
+
+  module With_rwlock = struct
+    type 'a t =
+      | P :
+          { data : ('a, 'k) Capsule.Data.t
+          ; rwlock : 'k Rwlock.t
+          }
+          -> 'a t
+
+    let create f =
+      let (P rwlock) = Rwlock.create () in
+      let data = Capsule.Data.create f in
+      P { data; rwlock }
+    ;;
+
+    let of_isolated (Capsule.Isolated.P #{ key; data }) =
+      let rwlock = Sync.Rwlock.create key in
+      P { rwlock; data }
+    ;;
+
+    let with_write s (P { rwlock; data }) ~f =
+      Rwlock.with_write s rwlock ~f:(fun s access ->
+        f s (Capsule.Data.unwrap ~access data))
+      [@nontail]
+    ;;
+
+    let with_write_or_cancel s c (P { rwlock; data }) ~f =
+      Rwlock.with_write_or_cancel s c rwlock ~f:(fun s access ->
+        f s (Capsule.Data.unwrap ~access data))
+      [@nontail]
+    ;;
+
+    let with_write_guard s (P { rwlock; data }) ~f =
+      (Rwlock.Expert.with_password s rwlock ~f:(fun sync password ->
+         { aliased_many = f sync (Guard.P #{ password; data }) }))
+        .aliased_many
+    ;;
+
+    let with_write_guard_or_cancel s c (P { rwlock; data }) ~f
+      : _ Await_kernel.Or_canceled.t
+      =
+      match
+        Rwlock.Expert.with_password_or_cancel s c rwlock ~f:(fun sync password ->
+          { aliased_many = f sync (Guard.P #{ password; data }) })
+      with
+      | Completed { aliased_many = res } -> Completed res
+      | Canceled -> Canceled
+    ;;
+
+    let with_read s (P { rwlock; data }) ~f =
+      Rwlock.with_read s rwlock ~f:(fun s access ->
+        f s ((Capsule.Data.unwrap [@mode shared]) ~access data))
+      [@nontail]
+    ;;
+
+    let with_read_or_cancel s c (P { rwlock; data }) ~f =
+      Rwlock.with_read_or_cancel s c rwlock ~f:(fun s access ->
+        f s ((Capsule.Data.unwrap [@mode shared]) ~access data))
+      [@nontail]
+    ;;
+
+    (* SAFETY:
+
+       1. [shared] is [[@@unboxed]], meaning ['a] and
+          ['a shared have the same representation]
+       2. the modality transformation is sound for all monadic modalities
+    *)
+    external wrap_shared
+      :  ('a, 'k) Capsule.Data.t
+      -> ('a shared, 'k) Capsule.Data.t
+      @@ stateless
+      = "%identity"
+
+    let with_read_guard s (P { rwlock; data }) ~f =
+      (Rwlock.Expert.with_password_shared s rwlock ~f:(fun sync password ->
+         { aliased_many = f sync (Guard.Shared.P #{ password; data = wrap_shared data }) }))
+        .aliased_many
+    ;;
+
+    let with_read_guard_or_cancel s c (P { rwlock; data }) ~f
+      : _ Await_kernel.Or_canceled.t
+      =
+      match
+        Rwlock.Expert.with_password_shared_or_cancel s c rwlock ~f:(fun sync password ->
+          { aliased_many = f sync (Guard.Shared.P #{ password; data = wrap_shared data })
+          })
+      with
+      | Completed { aliased_many = res } -> Completed res
+      | Canceled -> Canceled
+    ;;
+
+    module Poisoning = struct
+      let with_write s (P { rwlock; data }) ~f =
+        Rwlock.Poisoning.with_write s rwlock ~f:(fun s access ->
+          f s (Capsule.Data.unwrap ~access data))
+        [@nontail]
+      ;;
+
+      let with_write_or_cancel s c (P { rwlock; data }) ~f =
+        Rwlock.Poisoning.with_write_or_cancel s c rwlock ~f:(fun s access ->
+          f s (Capsule.Data.unwrap ~access data))
+        [@nontail]
+      ;;
+
+      let with_write_guard s (P { rwlock; data }) ~f =
+        (Rwlock.Expert.with_password_poisoning s rwlock ~f:(fun sync password ->
+           { aliased_many = f sync (Guard.P #{ password; data }) }))
+          .aliased_many
+      ;;
+
+      let with_write_guard_or_cancel s c (P { rwlock; data }) ~f
+        : _ Await_kernel.Or_canceled.t
+        =
+        match
+          Rwlock.Expert.with_password_or_cancel_poisoning
+            s
+            c
+            rwlock
+            ~f:(fun sync password ->
+              { aliased_many = f sync (Guard.P #{ password; data }) })
+        with
+        | Completed { aliased_many = res } -> Completed res
+        | Canceled -> Canceled
+      ;;
+
+      let with_read s (P { rwlock; data }) ~f =
+        Rwlock.Poisoning.with_read s rwlock ~f:(fun s access ->
+          f s ((Capsule.Data.unwrap [@mode shared]) ~access data))
+        [@nontail]
+      ;;
+
+      let with_read_or_cancel s c (P { rwlock; data }) ~f =
+        Rwlock.Poisoning.with_read_or_cancel s c rwlock ~f:(fun s access ->
+          f s ((Capsule.Data.unwrap [@mode shared]) ~access data))
+        [@nontail]
+      ;;
+    end
+
+    let iter_write = with_write
+    let iter_read = with_read
+  end
 end
 
-module Rwlock = struct
-  type 'k t = 'k Rwlock.t
-  type packed = P : 'k t -> packed
+module Await = struct
+  include Definitions (Await)
 
-  let create () =
-    let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
-    P (Rwlock.create key)
-  ;;
+  module Mutex = struct
+    type 'k t = 'k Await.Mutex.t
+    type packed = P : 'k t -> packed
 
-  let create_m () : (module Module_with_rwlock) =
-    let (P (type k) (t : k t)) = create () in
-    (module struct
-      type nonrec k = k
+    let create () =
+      let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
+      P (Await.Mutex.create key)
+    ;;
 
-      let rwlock = t
-    end)
-  ;;
+    let create_m () : (module Module_with_mutex) =
+      let (P (type k) (t : k t)) = create () in
+      (module struct
+        type nonrec k = k
 
-  module Create () = (val create_m ())
+        let mutex = t
+      end)
+    ;;
 
-  let[@inline] with_write await t ~f =
-    (Rwlock.with_access await t ~f:(fun access ->
-       { global = { aliased = { many = f access } } }))
-      .global
-      .aliased
-      .many
-  ;;
+    module Create () = (val create_m ())
 
-  let[@inline] with_read await t ~f =
-    (Rwlock.with_access_shared await t ~f:(fun access ->
-       { global = { aliased = { many = f access } } }))
-      .global
-      .aliased
-      .many
-  ;;
-end
+    let[@inline] with_lock await t ~f =
+      (Await.Mutex.with_access await t ~f:(fun access ->
+         { global = { aliased_many = f access } }))
+        .global
+        .aliased_many
+    ;;
 
-module With_rwlock = struct
-  type ('a, 'k) inner : value mod contended portable =
-    { data : ('a, 'k) Capsule.Data.t
-    ; rwlock : 'k Rwlock.t
-    }
+    let[@inline] with_lock_or_cancel await c t ~f : _ Await_kernel.Or_canceled.t =
+      match
+        Await.Mutex.with_access_or_cancel await c t ~f:(fun access ->
+          { global = { aliased_many = f access } })
+      with
+      | Completed { global = { aliased_many = res } } -> Completed res
+      | Canceled -> Canceled
+    ;;
 
-  type 'a t : value mod contended portable = P : ('a, 'k) inner -> 'a t [@@unboxed]
+    module Poisoning = struct
+      let[@inline] with_lock await t ~f =
+        (Await.Mutex.with_access_poisoning await t ~f:(fun access ->
+           { global = { aliased_many = f access } }))
+          .global
+          .aliased_many
+      ;;
 
-  let create f =
-    let (P rwlock) = Rwlock.create () in
-    let data = Capsule.Data.create f in
-    P { data; rwlock }
-  ;;
+      let[@inline] with_lock_or_cancel await c t ~f : _ Await_kernel.Or_canceled.t =
+        match
+          Await.Mutex.with_access_or_cancel_poisoning await c t ~f:(fun access ->
+            { global = { aliased_many = f access } })
+        with
+        | Completed { global = { aliased_many = res } } -> Completed res
+        | Canceled -> Canceled
+      ;;
+    end
 
-  let of_isolated (Capsule.Isolated.P #{ key; data }) =
-    let rwlock = Await_sync.Rwlock.create key in
-    P { rwlock; data }
-  ;;
+    module Expert = Await.Mutex
+  end
 
-  let with_write await (P { rwlock; data }) ~f =
-    Rwlock.with_write await rwlock ~f:(fun access -> f (Capsule.Data.unwrap ~access data))
-    [@nontail]
-  ;;
+  module With_mutex = struct
+    type 'a t =
+      | P :
+          { data : ('a, 'k) Capsule.Data.t
+          ; mutex : 'k Mutex.t
+          }
+          -> 'a t
 
-  let with_read await (P { rwlock; data }) ~f =
-    Rwlock.with_read await rwlock ~f:(fun access ->
-      f ((Capsule.Data.unwrap [@mode shared]) ~access data))
-    [@nontail]
-  ;;
+    let create f =
+      let (P mutex) = Mutex.create () in
+      let data = Capsule.Data.create f in
+      P { data; mutex }
+    ;;
 
-  let iter_write = with_write
-  let iter_read = with_read
+    let of_isolated (Capsule.Isolated.P #{ key; data }) =
+      let mutex = Await.Mutex.create key in
+      P { mutex; data }
+    ;;
+
+    let with_lock await (P { mutex; data }) ~f =
+      Mutex.with_lock await mutex ~f:(fun access -> f (Capsule.Data.unwrap ~access data))
+      [@nontail]
+    ;;
+
+    let with_lock_or_cancel await c (P { mutex; data }) ~f =
+      Mutex.with_lock_or_cancel await c mutex ~f:(fun access ->
+        f (Capsule.Data.unwrap ~access data))
+      [@nontail]
+    ;;
+
+    let with_guard await (P { mutex; data }) ~f =
+      (Mutex.Expert.with_password await mutex ~f:(fun password ->
+         { aliased_many = f (Guard.P #{ data; password }) }))
+        .aliased_many
+    ;;
+
+    let with_guard_or_cancel await c (P { mutex; data }) ~f : _ Await_kernel.Or_canceled.t
+      =
+      match
+        Mutex.Expert.with_password_or_cancel await c mutex ~f:(fun password ->
+          { aliased_many = f (Guard.P #{ data; password }) })
+      with
+      | Completed { aliased_many = res } -> Completed res
+      | Canceled -> Canceled
+    ;;
+
+    module Poisoning = struct
+      let with_lock await (P { mutex; data }) ~f =
+        Mutex.Poisoning.with_lock await mutex ~f:(fun access ->
+          f (Capsule.Data.unwrap ~access data))
+        [@nontail]
+      ;;
+
+      let with_lock_or_cancel await c (P { mutex; data }) ~f =
+        match
+          Mutex.Poisoning.with_lock_or_cancel await c mutex ~f:(fun access ->
+            f (Capsule.Data.unwrap ~access data))
+        with
+        | Completed res -> Await_kernel.Or_canceled.Completed res
+        | Canceled -> Canceled
+      ;;
+    end
+
+    let iter = with_lock
+
+    let map await (P { mutex; data }) ~f =
+      let data =
+        (Mutex.with_lock await mutex ~f:(fun access ->
+           { aliased = Capsule.Data.wrap ~access (f (Capsule.Data.unwrap ~access data)) }))
+          .aliased
+      in
+      P { mutex; data }
+    ;;
+
+    let destroy await (P { mutex; data }) =
+      let key = Await.Mutex.acquire_and_poison await mutex in
+      let access = Capsule.Expert.Key.destroy key in
+      Capsule.Expert.Data.unwrap data ~access
+    ;;
+  end
+
+  module Rwlock = struct
+    type 'k t = 'k Await.Rwlock.t
+    type packed = P : 'k t -> packed
+
+    let create () =
+      let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
+      P (Await.Rwlock.create key)
+    ;;
+
+    let create_m () : (module Module_with_rwlock) =
+      let (P (type k) (t : k t)) = create () in
+      (module struct
+        type nonrec k = k
+
+        let rwlock = t
+      end)
+    ;;
+
+    module Create () = (val create_m ())
+
+    let[@inline] with_write await t ~f =
+      (Await.Rwlock.with_access await t ~f:(fun access ->
+         { global = { aliased = { many = f access } } }))
+        .global
+        .aliased
+        .many
+    ;;
+
+    let[@inline] with_read await t ~f =
+      (Await.Rwlock.with_access_shared await t ~f:(fun access ->
+         { global = { aliased = { many = f access } } }))
+        .global
+        .aliased
+        .many
+    ;;
+
+    let[@inline] with_write_or_cancel await c t ~f : _ Await_kernel.Or_canceled.t =
+      match
+        Await.Rwlock.with_access_or_cancel await c t ~f:(fun access ->
+          { global = { aliased = { many = f access } } })
+      with
+      | Completed { global = { aliased = { many = res } } } -> Completed res
+      | Canceled -> Canceled
+    ;;
+
+    let[@inline] with_read_or_cancel await c t ~f : _ Await_kernel.Or_canceled.t =
+      match
+        Await.Rwlock.with_access_shared_or_cancel await c t ~f:(fun access ->
+          { global = { aliased = { many = f access } } })
+      with
+      | Completed { global = { aliased = { many = res } } } -> Completed res
+      | Canceled -> Canceled
+    ;;
+
+    module Poisoning = struct
+      let[@inline] with_write await t ~f =
+        (Await.Rwlock.with_access_poisoning await t ~f:(fun access ->
+           { global = { aliased = { many = f access } } }))
+          .global
+          .aliased
+          .many
+      ;;
+
+      let[@inline] with_write_or_cancel await c t ~f : _ Await_kernel.Or_canceled.t =
+        match
+          Await.Rwlock.with_access_or_cancel_poisoning await c t ~f:(fun access ->
+            { global = { aliased = { many = f access } } })
+        with
+        | Completed { global = { aliased = { many = res } } } -> Completed res
+        | Canceled -> Canceled
+      ;;
+
+      let[@inline] with_read await t ~f =
+        (Await.Rwlock.with_access_shared_freezing await t ~f:(fun access ->
+           { global = { aliased = { many = f access } } }))
+          .global
+          .aliased
+          .many
+      ;;
+
+      let[@inline] with_read_or_cancel await c t ~f : _ Await_kernel.Or_canceled.t =
+        match
+          Await.Rwlock.with_access_shared_or_cancel_freezing await c t ~f:(fun access ->
+            { global = { aliased = { many = f access } } })
+        with
+        | Completed { global = { aliased = { many = res } } } -> Completed res
+        | Canceled -> Canceled
+      ;;
+    end
+
+    module Expert = Await.Rwlock
+  end
+
+  module With_rwlock = struct
+    type 'a t =
+      | P :
+          { data : ('a, 'k) Capsule.Data.t
+          ; rwlock : 'k Rwlock.t
+          }
+          -> 'a t
+
+    let create f =
+      let (P rwlock) = Rwlock.create () in
+      let data = Capsule.Data.create f in
+      P { data; rwlock }
+    ;;
+
+    let of_isolated (Capsule.Isolated.P #{ key; data }) =
+      let rwlock = Await.Rwlock.create key in
+      P { rwlock; data }
+    ;;
+
+    let with_write await (P { rwlock; data }) ~f =
+      Rwlock.with_write await rwlock ~f:(fun access ->
+        f (Capsule.Data.unwrap ~access data))
+      [@nontail]
+    ;;
+
+    let with_write_or_cancel await c (P { rwlock; data }) ~f =
+      Rwlock.with_write_or_cancel await c rwlock ~f:(fun access ->
+        f (Capsule.Data.unwrap ~access data))
+      [@nontail]
+    ;;
+
+    let with_write_guard await (P { rwlock; data }) ~f =
+      (Rwlock.Expert.with_password await rwlock ~f:(fun password ->
+         { aliased_many = f (Guard.P #{ password; data }) }))
+        .aliased_many
+    ;;
+
+    let with_write_guard_or_cancel await c (P { rwlock; data }) ~f
+      : _ Await_kernel.Or_canceled.t
+      =
+      match
+        Rwlock.Expert.with_password_or_cancel await c rwlock ~f:(fun password ->
+          { aliased_many = f (Guard.P #{ password; data }) })
+      with
+      | Completed { aliased_many = res } -> Completed res
+      | Canceled -> Canceled
+    ;;
+
+    let with_read await (P { rwlock; data }) ~f =
+      Rwlock.with_read await rwlock ~f:(fun access ->
+        f ((Capsule.Data.unwrap [@mode shared]) ~access data))
+      [@nontail]
+    ;;
+
+    let with_read_or_cancel await c (P { rwlock; data }) ~f =
+      Rwlock.with_read_or_cancel await c rwlock ~f:(fun access ->
+        f ((Capsule.Data.unwrap [@mode shared]) ~access data))
+      [@nontail]
+    ;;
+
+    (* SAFETY:
+
+       1. [shared] is [[@@unboxed]], meaning ['a] and
+          ['a shared have the same representation]
+       2. the modality transformation is sound for all monadic modalities
+    *)
+    external wrap_shared
+      :  ('a, 'k) Capsule.Data.t
+      -> ('a shared, 'k) Capsule.Data.t
+      @@ stateless
+      = "%identity"
+
+    let with_read_guard await (P { rwlock; data }) ~f =
+      (Rwlock.Expert.with_password_shared await rwlock ~f:(fun password ->
+         { aliased_many = f (Guard.Shared.P #{ password; data = wrap_shared data }) }))
+        .aliased_many
+    ;;
+
+    let with_read_guard_or_cancel await c (P { rwlock; data }) ~f
+      : _ Await_kernel.Or_canceled.t
+      =
+      match
+        Rwlock.Expert.with_password_shared_or_cancel await c rwlock ~f:(fun password ->
+          { aliased_many = f (Guard.Shared.P #{ password; data = wrap_shared data }) })
+      with
+      | Completed { aliased_many = res } -> Completed res
+      | Canceled -> Canceled
+    ;;
+
+    module Poisoning = struct
+      let with_write await (P { rwlock; data }) ~f =
+        Rwlock.Poisoning.with_write await rwlock ~f:(fun access ->
+          f (Capsule.Data.unwrap ~access data))
+        [@nontail]
+      ;;
+
+      let with_write_or_cancel await c (P { rwlock; data }) ~f =
+        Rwlock.Poisoning.with_write_or_cancel await c rwlock ~f:(fun access ->
+          f (Capsule.Data.unwrap ~access data))
+        [@nontail]
+      ;;
+
+      let with_write_guard await (P { rwlock; data }) ~f =
+        (Rwlock.Expert.with_password_poisoning await rwlock ~f:(fun password ->
+           { aliased_many = f (Guard.P #{ password; data }) }))
+          .aliased_many
+      ;;
+
+      let with_write_guard_or_cancel await c (P { rwlock; data }) ~f
+        : _ Await_kernel.Or_canceled.t
+        =
+        match
+          Rwlock.Expert.with_password_or_cancel_poisoning
+            await
+            c
+            rwlock
+            ~f:(fun password -> { aliased_many = f (Guard.P #{ password; data }) })
+        with
+        | Completed { aliased_many = res } -> Completed res
+        | Canceled -> Canceled
+      ;;
+
+      let with_read await (P { rwlock; data }) ~f =
+        Rwlock.Poisoning.with_read await rwlock ~f:(fun access ->
+          f ((Capsule.Data.unwrap [@mode shared]) ~access data))
+        [@nontail]
+      ;;
+
+      let with_read_or_cancel await c (P { rwlock; data }) ~f =
+        Rwlock.Poisoning.with_read_or_cancel await c rwlock ~f:(fun access ->
+          f ((Capsule.Data.unwrap [@mode shared]) ~access data))
+        [@nontail]
+      ;;
+
+      let with_read_guard await (P { rwlock; data }) ~f =
+        (Rwlock.Expert.with_password_shared_freezing await rwlock ~f:(fun password ->
+           { aliased_many = f (Guard.Shared.P #{ password; data = wrap_shared data }) }))
+          .aliased_many
+      ;;
+
+      let with_read_guard_or_cancel await c (P { rwlock; data }) ~f
+        : _ Await_kernel.Or_canceled.t
+        =
+        match
+          Rwlock.Expert.with_password_shared_or_cancel_freezing
+            await
+            c
+            rwlock
+            ~f:(fun password ->
+              { aliased_many = f (Guard.Shared.P #{ password; data = wrap_shared data }) })
+        with
+        | Completed { aliased_many = res } -> Completed res
+        | Canceled -> Canceled
+      ;;
+    end
+
+    let iter_write = with_write
+    let iter_read = with_read
+  end
 end

@@ -9,7 +9,7 @@ open Await_kernel
     type ['a]. One can {!put} new values, and wait to read the value with {!take}.
 
     Mvars are entirely linear - every {!put} value is {!take}n exactly once. *)
-type !'a t : value mod contended portable
+type !'a t : value mod contended non_float portable
 
 (** [create ()] returns a new empty mvar.
 

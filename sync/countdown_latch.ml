@@ -1,7 +1,8 @@
-open Base
-open Basement
-open Await_kernel
-open Await_sync_intf
+open! Base
+open! Import
+
+(** See [Adaptive_backoff.once] *)
+let log_scale = 10
 
 module State : sig
   type t : immediate
@@ -79,7 +80,7 @@ let[@inline never] already_reached_0 t d =
 ;;
 
 let incr t =
-  let[@inline] rec loop t backoff =
+  let[@inline] rec loop () =
     let before = Awaitable.get t in
     if State.is_poisoned before
     then raise Poisoned
@@ -89,9 +90,11 @@ let incr t =
       let after = State.and_incr before in
       match Awaitable.compare_and_set t ~if_phys_equal_to:before ~replace_with:after with
       | Set_here -> ()
-      | Compare_failed -> loop t (Backoff.once backoff))
+      | Compare_failed ->
+        Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+        loop ())
   in
-  loop t Backoff.default
+  loop () [@nontail]
 ;;
 
 let decr t =

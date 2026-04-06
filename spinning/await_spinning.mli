@@ -2,9 +2,16 @@
 
 open Await_kernel
 
+(** [with_sync ~f] runs [f t] such that [Sync.sync t ~on:trigger] will block the current
+    thread by spinning until the [trigger] is signalled, and [Sync.yield t] does nothing.
+
+    This is a simple spinning implementation of [Sync.t] suitable for testing and
+    benchmarking purposes. This should not be used outside of said use cases. *)
+val with_sync : f:(Sync.t @ local -> 'a @ unique) @ local once -> 'a
+
 (** [with_await terminator ~f] runs [f t] such that
-    [Await.await t ~on_terminate ~await_on] will block the domain by spinning until the
-    trigger to [await_on] is signalled, and [Await.yield t] does nothing.
+    [Await.sync t ~on_terminate ~on:trigger] will block the current thread by spinning
+    until the [trigger] is signalled, and [Await.yield t] does nothing.
 
     This is a simple spinning implementation of [Await.t] suitable for testing and
     benchmarking purposes. This should not be used outside of said use cases. *)

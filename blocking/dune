@@ -1,9 +1,6 @@
 (library
- (foreign_stubs
-  (language c)
-  (names await_blocking_stubs))
- (name await_blocking)
- (public_name await.blocking)
- (libraries await_kernel base basement capsule0.blocking_sync portable.kernel)
+ (name sync_blocking)
+ (public_name await.sync_blocking)
+ (libraries await_blocking_futex await_kernel capsule0.blocking_sync)
  (preprocess
-  (pps ppx_jane ppx_fuelproof)))
+  (pps ppx_jane -compare-require-explicit-locality)))

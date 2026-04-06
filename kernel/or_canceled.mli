@@ -11,6 +11,8 @@ type%template ('a : k) t =
     , value_or_null & void
     , value_or_null & value_or_null
     , (value_or_null & value_or_null) & value_or_null
+    , word
+    , word & value_or_null
     , value_or_null )]
 [@@deriving
   compare ~localize, equal ~localize, globalize, sexp ~stackify, sexp_grammar, hash]
@@ -23,7 +25,9 @@ val%template completed_exn : ('a : k). ('a t[@kind k]) -> 'a
     , void
     , value_or_null & void
     , value_or_null & value_or_null
-    , (value_or_null & value_or_null) & value_or_null )]
+    , (value_or_null & value_or_null) & value_or_null
+    , word
+    , word & value_or_null )]
 
 include Monad.S [@kind value_or_null] [@mode local] with type 'a t := 'a t
 
@@ -54,6 +58,8 @@ module Exn : sig
       , void
       , value_or_null & void
       , value_or_null & value_or_null
-      , (value_or_null & value_or_null) & value_or_null )]
+      , (value_or_null & value_or_null) & value_or_null
+      , word
+      , word & value_or_null )]
   [@@mode u = (aliased, unique)]
 end

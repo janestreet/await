@@ -17,7 +17,7 @@
 module Source : sig
   (** [t] is the type of sources of triggers. A source can be used to signal the
       associated trigger. *)
-  type t : value mod contended portable
+  type t : value mod contended non_float portable
 
   (** [same l r] determines whether [l] and [r] are the one and the same trigger. *)
   val same : t @ local -> t @ local -> bool
@@ -42,7 +42,7 @@ end
 
 (** [t] is the type of triggers. A sink can be used to register a callback with the
     associated trigger. *)
-type t : value mod contended portable
+type t : value mod contended non_float portable
 
 (** [is_signalled t] is [true] if [t] has been signalled and [false] if it is unsignalled. *)
 val is_signalled : t @ local -> bool

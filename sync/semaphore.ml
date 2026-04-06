@@ -1,7 +1,8 @@
-open Base
-open Basement
-open Await_kernel
-open Await_sync_intf
+open! Base
+open! Import
+
+(** See [Adaptive_backoff.once] *)
+let log_scale = 5
 
 module Acquired_or_would_block = struct
   type t =
@@ -192,7 +193,7 @@ let acquire_as (type r) w c t (r : (unit, r) result) : r =
   if State.has_value_one_or_higher prior
   then completed ()
   else (
-    let rec acquire_awaiting w c t backoff before =
+    let rec acquire_awaiting w c t before =
       if State.has_value_one_or_higher before
       then (
         let after =
@@ -205,8 +206,8 @@ let acquire_as (type r) w c t (r : (unit, r) result) : r =
           if State.has_value_one_or_higher after then Awaitable.signal t;
           completed ()
         | Compare_failed ->
-          let backoff = Backoff.once backoff in
-          acquire_awaiting w c t backoff (Awaitable.get t))
+          Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+          acquire_awaiting w c t (Awaitable.get t))
       else if State.is_poisoned before
       then raise Poisoned
       else (
@@ -222,18 +223,18 @@ let acquire_as (type r) w c t (r : (unit, r) result) : r =
           match r with
           | Value ->
             (match Awaitable.await w t ~until_phys_unequal_to:after with
-             | Signaled -> acquire_awaiting w c t Backoff.default (Awaitable.get t)
+             | Signaled -> acquire_awaiting w c t (Awaitable.get t)
              | Terminated -> raise Await.Terminated)
           | Or_canceled ->
             (match Awaitable.await_or_cancel w c t ~until_phys_unequal_to:after with
-             | Signaled -> acquire_awaiting w c t Backoff.default (Awaitable.get t)
+             | Signaled -> acquire_awaiting w c t (Awaitable.get t)
              | Terminated -> raise Await.Terminated
              | Canceled -> Or_canceled.Canceled))
         else (
-          let backoff = Backoff.once backoff in
-          acquire_awaiting w c t backoff (Awaitable.get t)))
+          Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+          acquire_awaiting w c t (Awaitable.get t)))
     in
-    let rec acquire_contended w c t backoff before =
+    let rec acquire_contended w c t before =
       if State.has_value_zero_or_higher before
       then completed ()
       else (
@@ -243,12 +244,12 @@ let acquire_as (type r) w c t (r : (unit, r) result) : r =
         match
           Awaitable.compare_and_set t ~if_phys_equal_to:before ~replace_with:after
         with
-        | Set_here -> acquire_awaiting w c t Backoff.default after
+        | Set_here -> acquire_awaiting w c t after
         | Compare_failed ->
-          let backoff = Backoff.once backoff in
-          acquire_contended w c t backoff (Awaitable.get t))
+          Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+          acquire_contended w c t (Awaitable.get t))
     in
-    acquire_contended w c t Backoff.default (prior |> State.and_decr_value))
+    acquire_contended w c t (prior |> State.and_decr_value))
 ;;
 
 let acquire w t = acquire_as w Cancellation.never t Value

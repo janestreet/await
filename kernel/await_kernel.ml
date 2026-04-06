@@ -1,5 +1,6 @@
 module Cancellation = Cancellation
 module Or_canceled = Or_canceled
+module Sync = Sync
 module Terminator = Terminator
 module Trigger = Trigger
 module Yield = Yield

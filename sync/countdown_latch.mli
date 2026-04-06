@@ -14,7 +14,7 @@ open Await_kernel
     after it reaches zero. If you need a version that resets the count, consider using a
     {!Barrier} instead, though note that with a barrier the only operation available is
     waiting - it is not possible to decrement without blocking. *)
-type t : value mod contended portable [@@deriving sexp_of]
+type t : value mod contended non_float portable [@@deriving sexp_of]
 
 (** [max_count] is the maximum allowed count for a countdown latch. *)
 val max_count : int

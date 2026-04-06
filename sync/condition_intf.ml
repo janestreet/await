@@ -1,4 +1,5 @@
-open Await_kernel
+open! Base
+open! Import
 
 module type Condition = sig
   (** Condition variable for waiting for changes to state protected by a lock. *)
@@ -7,7 +8,7 @@ module type Condition = sig
 
   (** ['k t] is the type of a condition variable associated with the capsule ['k]. This
       condition may only be used with the matching ['k lock]. *)
-  type 'k t : value mod contended portable
+  type 'k t : value mod contended forkable many portable unyielding
 
   (** [create ()] creates a new condition variable associated with the matching ['k lock]
       and with a certain property {i P} that is protected by the lock.
@@ -32,8 +33,8 @@ module type Condition = sig
     :  Await.t @ local
     -> 'k t @ local
     -> lock:'k lock @ local
-    -> 'k Capsule.Expert.Key.t @ unique
-    -> 'k Capsule.Expert.Key.t @ unique
+    -> 'k Capsule.Key.t @ unique
+    -> 'k Capsule.Key.t @ unique
 
   (** [signal t] wakes up one waiter on the condition variable [t], if there is one. If
       there is none, this call has no effect. It is recommended to call [signal t] after a

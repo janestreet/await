@@ -10,7 +10,11 @@ open Await_kernel
 (** {1 Atomic API} *)
 
 (** An awaitable atomic reference to a value of type ['a]. *)
-type (!'a : value_or_null) t : value mod contended portable
+type (!'a : value_or_null)
+     t :
+     value
+     mod contended forkable many non_float portable unyielding
+     with 'a @@ contended portable
 
 (** [make v] creates a new awaitable atomic reference with the given initial value [v].
 
@@ -142,7 +146,7 @@ module Awaiter : sig
   type ('a : value_or_null) awaitable := 'a t
 
   (** Represents a single use awaiter of a signal to an awaitable. *)
-  type t
+  type t : value mod non_float portable
 
   (** [create_and_add t s ~until_phys_unequal_to:v] creates a single-use awaiter with the
       given trigger [t], adds the awaiter to the FIFO associated with the awaitable [t],
@@ -170,6 +174,12 @@ module Awaiter : sig
       the awaitable . *)
   val cancel_and_remove : t @ local -> unit
 end
+
+(** [random_key t] is the random key assigned to the awaitable [t] at construction time.
+    The random key is not guaranteed to be unique. *)
+val random_key : ('a : value_or_null). 'a t @ local -> int
+
+(**/**)
 
 module For_testing : sig
   (** [length t] returns an upper bound on the length of the internal queue of awaiters

@@ -1,9 +1,10 @@
-open Base
-open Basement
-open Await_kernel
-open Await_sync_intf
+open! Base
+open! Import
 
-type ('a, _) state : value mod contended portable =
+(** See [Adaptive_backoff.once] *)
+let log_scale = 10
+
+type ('a, _) state : value mod contended non_float portable =
   | Value :
       { value : 'a @@ contended portable
       ; mutable wait : bool
@@ -89,7 +90,7 @@ let rec poison t =
   | Poisoned _ -> ()
 ;;
 
-let rec update_contended t pure_f backoff =
+let rec update_contended t pure_f =
   match Awaitable.get t with
   | Value before_r as before ->
     let (Update after_r as after : (_, [ `Update ]) state) =
@@ -101,17 +102,18 @@ let rec update_contended t pure_f backoff =
        if should_broadcast before then Awaitable.broadcast t;
        let _ : Awaitable.Compare_failed_or_set_here.t = finish_as t after As_value in
        before_r.value
-     | Compare_failed -> update_contended t after_r.pure_f (Backoff.once backoff))
-  | Update _ as before -> finish_and_update_contended t pure_f backoff before
+     | Compare_failed ->
+       Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+       update_contended t after_r.pure_f)
+  | Update _ as before -> finish_and_update_contended t pure_f before
   | Poisoned _ -> raise Poisoned
 
-and finish_and_update_contended t pure_f backoff before =
-  let backoff =
-    match finish_as t before As_value with
-    | Set_here -> backoff
-    | Compare_failed -> Backoff.once backoff
-  in
-  update_contended t pure_f backoff
+and finish_and_update_contended t pure_f before =
+  (match finish_as t before As_value with
+   | Set_here -> ()
+   | Compare_failed ->
+     Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale);
+  update_contended t pure_f
 ;;
 
 let get_and_update t ~pure_f =
@@ -129,12 +131,14 @@ let get_and_update t ~pure_f =
            (* Check broadcast after CAS to ensure any [set_wait] happens-before. *)
            if should_broadcast before then Awaitable.broadcast t;
            before_r.value
-         | Compare_failed -> update_contended t pure_f (Backoff.once Backoff.default))
+         | Compare_failed ->
+           Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+           update_contended t pure_f)
        else value
      | exception exn ->
        let bt = Backtrace.Exn.most_recent () in
        poison_and_raise t exn bt)
-  | Update _ as before -> finish_and_update_contended t pure_f Backoff.default before
+  | Update _ as before -> finish_and_update_contended t pure_f before
   | Poisoned _ -> raise Poisoned
 ;;
 

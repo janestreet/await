@@ -1,8 +1,8 @@
 (library
  (name await_sync)
  (public_name await.sync)
- (libraries await_kernel base basement capsule portable.common
-   portable.kernel)
+ (libraries await_kernel base basement capsule portable.adaptive_backoff
+   portable.common portable.kernel portable_lockfree_htbl)
  (preprocess
   (pps ppx_template ppx_debug_assert ppx_sexp_conv ppx_sexp_value
     ppx_shorthand)))

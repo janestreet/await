@@ -9,7 +9,9 @@ type%template ('a : k) t =
     , void
     , value_or_null & void
     , value_or_null & value_or_null
-    , (value_or_null & value_or_null) & value_or_null )]
+    , (value_or_null & value_or_null) & value_or_null
+    , word
+    , word & value_or_null )]
 [@@deriving
   compare ~localize, equal ~localize, globalize, sexp ~stackify, sexp_grammar, hash]
 
@@ -24,7 +26,9 @@ let%template[@inline] completed_exn : (_ t[@kind k]) -> _ = function
     , void
     , value_or_null & void
     , value_or_null & value_or_null
-    , (value_or_null & value_or_null) & value_or_null )]
+    , (value_or_null & value_or_null) & value_or_null
+    , word
+    , word & value_or_null )]
 ;;
 
 include Monad.Make [@mode local] [@modality portable] (struct
@@ -58,7 +62,9 @@ module Exn = struct
       , void
       , value_or_null & void
       , value_or_null & value_or_null
-      , (value_or_null & value_or_null) & value_or_null )]
+      , (value_or_null & value_or_null) & value_or_null
+      , word
+      , word & value_or_null )]
   [@@mode u = (aliased, unique)]
   ;;
 end

@@ -3,13 +3,19 @@
 (** A termination token represents an implicit and unexpected interrupt request to be used
     in case of panics. *)
 
+(** [Terminated] is an exception indicating that an operation has been terminated. *)
+exception Terminated
+
 (** [t] is the type of termination tokens. Tokens become terminated by calls to
     [Source.terminate]. *)
-type t : value mod contended portable
+type t : value mod contended non_float portable
 
 (** [is_terminated t] is [true] if [t] has been terminated and [false] otherwise. Once
     [is_terminated t] is [true] it will never again become [false]. *)
 val is_terminated : t @ local -> bool
+
+(** [check t] raises [Terminated] if [t] has been terminated and does nothing otherwise. *)
+val check : t @ local -> unit
 
 (** [same t1 t2] determines whether the tokens [t1] and [t2] are the one and the same. *)
 val same : t @ local -> t @ local -> bool
@@ -23,7 +29,7 @@ val always : t
 module Source : sig
   (** [t] is the type of termination sources that can be used to cause an associated
       termination token to become terminated. *)
-  type t : value mod contended portable
+  type t : value mod contended non_float portable
 
   (** [terminate t] makes the token associated with [t] terminated, and signals any
       triggers attached to it. *)
@@ -86,7 +92,7 @@ val add_trigger : t @ local -> Trigger.Source.t -> Link.t
 
     This allows turning termination into cancellation for the purpose of carefully
     handling resources in critical sections where implicit termination is not desired. *)
-val cancellation : t @ local -> Cancellation.t @ local
+val cancellation : t @ local -> Cancellation0.t @ local
 
 module Expert : sig
   (** [globalize t] is [t @ global].

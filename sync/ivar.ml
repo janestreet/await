@@ -1,6 +1,5 @@
-open Base
-open Await_kernel
-open Await_sync_intf
+open! Base
+open! Import
 
 (*=The underlying state machine of an ivar:
 

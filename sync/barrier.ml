@@ -1,6 +1,5 @@
-open Base
-open Await_kernel
-open Await_sync_intf
+open! Base
+open! Import
 
 module State : sig @@ portable
   type t : immediate

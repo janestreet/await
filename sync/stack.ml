@@ -1,6 +1,8 @@
-open Base
-open Basement
-open Await_kernel
+open! Base
+open! Import
+
+(** See [Adaptive_backoff.once] *)
+let log_scale = 11
 
 type 'a t = 'a Modes.Portended.t list Awaitable.t
 
@@ -11,18 +13,23 @@ let sexp_of_t (type a : value mod contended) sexp_of_a (t : a t) =
 ;;
 
 let push t a =
-  let[@inline] rec loop t a backoff =
+  let[@inline] rec loop () =
     let before = Awaitable.get t in
     match
-      Awaitable.compare_and_set t ~if_phys_equal_to:before ~replace_with:(a :: before)
+      Awaitable.compare_and_set
+        t
+        ~if_phys_equal_to:before
+        ~replace_with:({ portended = a } :: before)
     with
     | Set_here ->
       (match before with
        | [] -> Awaitable.signal t
        | _ :: _ -> ())
-    | Compare_failed -> loop t a (Backoff.once backoff)
+    | Compare_failed ->
+      Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+      loop ()
   in
-  loop t { portended = a } Backoff.default
+  loop () [@nontail]
 ;;
 
 type state =
@@ -30,12 +37,12 @@ type state =
   | Signaled
 
 let pop await t =
-  let[@inline] rec loop backoff await t state =
+  let[@inline] rec loop state =
     match Awaitable.get t with
     | [] ->
       (match Awaitable.await await t ~until_phys_unequal_to:[] with
        | Terminated -> raise Await.Terminated
-       | Signaled -> loop Backoff.default await t Signaled)
+       | Signaled -> loop Signaled)
     | x :: xs as cur ->
       (match Awaitable.compare_and_set t ~if_phys_equal_to:cur ~replace_with:xs with
        | Set_here ->
@@ -44,19 +51,21 @@ let pop await t =
           | Signaled, _ :: _ -> Awaitable.signal t
           | Never_awaited, _ | _, [] -> ());
          x.portended
-       | Compare_failed -> loop (Backoff.once backoff) await t state)
+       | Compare_failed ->
+         Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+         loop state)
   in
-  loop Backoff.default await t Never_awaited
+  loop Never_awaited [@nontail]
 ;;
 
 let pop_or_cancel await c t =
-  let[@inline] rec loop backoff await c t state : _ Or_canceled.t =
+  let[@inline] rec loop state : _ Or_canceled.t =
     match Awaitable.get t with
     | [] ->
       (match Awaitable.await_or_cancel await c t ~until_phys_unequal_to:[] with
        | Terminated -> raise Await.Terminated
        | Canceled -> Canceled
-       | Signaled -> loop Backoff.default await c t Signaled)
+       | Signaled -> loop Signaled)
     | x :: xs as cur ->
       (match Awaitable.compare_and_set t ~if_phys_equal_to:cur ~replace_with:xs with
        | Set_here ->
@@ -65,21 +74,27 @@ let pop_or_cancel await c t =
           | Signaled, _ :: _ -> Awaitable.signal t
           | Never_awaited, _ | _, [] -> ());
          Completed x.portended
-       | Compare_failed -> loop (Backoff.once backoff) await c t state)
+       | Compare_failed ->
+         Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+         loop state)
   in
-  loop Backoff.default await c t Never_awaited
+  loop Never_awaited [@nontail]
 ;;
 
 let pop_nonblocking t =
-  let[@inline] rec loop backoff t =
+  let[@inline] rec loop () =
     match Awaitable.get t with
-    | [] -> Null
+    | [] ->
+      Adaptive_backoff.once_unless_alone ~random_key:(Awaitable.random_key t) ~log_scale;
+      Null
     | x :: xs as cur ->
       (match Awaitable.compare_and_set t ~if_phys_equal_to:cur ~replace_with:xs with
        | Set_here -> This x.portended
-       | Compare_failed -> loop (Backoff.once backoff) t)
+       | Compare_failed ->
+         Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+         loop ())
   in
-  loop Backoff.default t
+  loop () [@nontail]
 ;;
 
 external portended_list

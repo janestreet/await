@@ -4,7 +4,7 @@ open Await_kernel
 
 (** A write-once cell that can be empty or full (i.e., hold a single value). *)
 
-type !'a t : value mod contended portable
+type !'a t : value mod contended non_float portable
 
 (** [create ()] returns an empty ivar. *)
 val create : unit -> 'a t

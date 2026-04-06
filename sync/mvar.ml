@@ -1,7 +1,8 @@
-open Base
-open Basement
-open Await_kernel
-open Await_sync_intf
+open! Base
+open! Import
+
+(** See [Adaptive_backoff.once] *)
+let log_scale = 10
 
 (*=The underlying state machine of an mvar:
 
@@ -82,7 +83,7 @@ type ('a, 'r) result =
 
 let put_as (type r) w c t v (r : (unit, r) result) : r =
   let next = State.of_value v in
-  let[@inline] rec go backoff before : r =
+  let[@inline] rec go before : r =
     if not (State.is_value before)
     then (
       match Awaitable.compare_and_set t ~if_phys_equal_to:before ~replace_with:next with
@@ -93,21 +94,21 @@ let put_as (type r) w c t v (r : (unit, r) result) : r =
          | Or_canceled -> Completed ())
       | Compare_failed ->
         (* Another putter beat us to writing; try again. *)
-        let backoff = Backoff.once backoff in
-        go backoff (Awaitable.get t))
+        Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+        go (Awaitable.get t))
     else (
       match r with
       | Value ->
         (match Awaitable.await w t ~until_phys_unequal_to:before with
-         | Signaled -> go Backoff.default (Awaitable.get t)
+         | Signaled -> go (Awaitable.get t)
          | Terminated -> raise Await.Terminated)
       | Or_canceled ->
         (match Awaitable.await_or_cancel w c t ~until_phys_unequal_to:before with
-         | Signaled -> go Backoff.default (Awaitable.get t)
+         | Signaled -> go (Awaitable.get t)
          | Terminated -> raise Await.Terminated
          | Canceled -> Canceled))
   in
-  go Backoff.default (Awaitable.get t) [@nontail]
+  go (Awaitable.get t) [@nontail]
 ;;
 
 let put w t v = put_as w Cancellation.never t v Value
@@ -131,7 +132,9 @@ let try_put t v =
       | Set_here ->
         if State.is_readers before then Awaitable.broadcast t;
         Ok
-      | Compare_failed -> go ())
+      | Compare_failed ->
+        Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+        go ())
   in
   go () [@nontail]
 ;;
@@ -143,7 +146,7 @@ let put_exn t v =
 ;;
 
 let take_as (type a r) w c (t : a t) (r : (a, r) result) : r =
-  let[@inline] rec go backoff before : r =
+  let[@inline] rec go before : r =
     match State.value before with
     | This v ->
       (match
@@ -157,8 +160,8 @@ let take_as (type a r) w c (t : a t) (r : (a, r) result) : r =
           | Value -> v
           | Or_canceled -> Completed v)
        | Compare_failed ->
-         let backoff = Backoff.once backoff in
-         go backoff (Awaitable.get t))
+         Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+         go (Awaitable.get t))
     | Null ->
       let after_set_to_readers =
         if State.is_readers before
@@ -178,40 +181,41 @@ let take_as (type a r) w c (t : a t) (r : (a, r) result) : r =
         match r with
         | Value ->
           (match Awaitable.await w t ~until_phys_unequal_to:after_set_to_readers with
-           | Signaled -> go Backoff.default (Awaitable.get t)
+           | Signaled -> go (Awaitable.get t)
            | Terminated -> raise Await.Terminated)
         | Or_canceled ->
           (match
              Awaitable.await_or_cancel w c t ~until_phys_unequal_to:after_set_to_readers
            with
-           | Signaled -> go Backoff.default (Awaitable.get t)
+           | Signaled -> go (Awaitable.get t)
            | Terminated -> raise Await.Terminated
            | Canceled -> Canceled))
-      else go (Backoff.once backoff) after_set_to_readers
+      else (
+        Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+        go after_set_to_readers)
   in
-  go Backoff.default (Awaitable.get t) [@nontail]
+  go (Awaitable.get t) [@nontail]
 ;;
 
 let take w t = take_as w Cancellation.never t Value
 let take_or_cancel w c t = take_as w c t Or_canceled
 
-let try_take t =
-  let[@inline] rec go backoff =
-    let before = Awaitable.get t in
-    match State.value before with
-    | Null -> Null
-    | This v ->
-      (match
-         Awaitable.compare_and_set t ~if_phys_equal_to:before ~replace_with:State.empty
-       with
-       | Set_here ->
-         (* Note: we unconditionally broadcast here since the state representation doesn't
-            differentiate between "full" and "full, with waiting putters". *)
-         Awaitable.broadcast t;
-         This v
-       | Compare_failed -> go (Backoff.once backoff))
-  in
-  go Backoff.default [@nontail]
+let rec try_take t =
+  let before = Awaitable.get t in
+  match State.value before with
+  | Null -> Null
+  | This v ->
+    (match
+       Awaitable.compare_and_set t ~if_phys_equal_to:before ~replace_with:State.empty
+     with
+     | Set_here ->
+       (* Note: we unconditionally broadcast here since the state representation doesn't
+          differentiate between "full" and "full, with waiting putters". *)
+       Awaitable.broadcast t;
+       This v
+     | Compare_failed ->
+       Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+       try_take t)
 ;;
 
 let take_exn t =

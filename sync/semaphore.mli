@@ -15,7 +15,7 @@ end
 (** A poisonable counting semaphore. *)
 
 (** Represents a poisonable counting semaphore. *)
-type t : value mod contended portable [@@deriving sexp_of ~stackify]
+type t : value mod contended non_float portable [@@deriving sexp_of ~stackify]
 
 (** Maximum counter value allowed by the semaphore implementation. *)
 val max_value : int

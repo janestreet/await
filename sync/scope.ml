@@ -1,7 +1,5 @@
-open Base
-open Basement
-open Portable_kernel
-open Await_kernel
+open! Base
+open! Import
 
 module Live : sig @@ portable
   type count : immediate
@@ -217,7 +215,7 @@ let with_ w context ~f =
             }
         }
       in
-      match f t with
+      match f (Await.with_terminator w terminator) t with
       | result ->
         finish w t ~tasks_finished ~daemons_finished;
         result

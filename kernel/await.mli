@@ -5,47 +5,33 @@ open Base
 (** [Terminated] is an exception indicating that an operation has been terminated. *)
 exception Terminated
 
-(** [t] is the type of implementations of awaiting. Operations that need to await
-    something take a [t] that provides an implementation of awaiting for them to use.
+(** [Await.t] is the type of implementations of awaiting. Operations that need to block
+    the current thread for an {i unbounded} amount of time take an [Await.t] which
+    provides an implementation of awaiting for them to use.
 
     Any awaiting operation can be terminated by the awaiting implementation, which results
-    in a [Terminated] exception being raised. *)
-type t : value mod contended portable
+    in a [Terminated] exception being raised.
 
-(** [with_ terminator ~yield ~await c ~f] calls [f] with an awaiter that has [terminator]
-    as its terminator, [yield c] as its implementation of [yield], and [await c] as its
-    implementation of [await]. *)
-val with_
-  : 'c ('r : value_or_null).
-  terminator:Terminator.t @ local
-  -> yield:('c @ local -> unit) or_null @ local
-  -> await:('c @ local -> Trigger.t -> unit) @ local
-  -> 'c @ local
-  -> f:(t @ local -> 'r @ forkable local once unique) @ local once
-  -> 'r @ forkable local once unique
-
-(** [create_global ~terminator ~yield ~await c] creates a global awaiter with [yield c] as
-    its implementation of [yield] and [await c] as its implementation of [await]. Both
-    [yield] and [await] must be portable as the returned [Await.t] is not local, allowing
-    it to escape to other capsules. *)
-val create_global
-  :  terminator:Terminator.t
-  -> yield:('c @ contended portable -> unit) or_null @ portable
-  -> await:('c @ contended portable -> Trigger.t -> unit) @ portable
-  -> 'c @ contended portable
-  -> t
+    Under the hood, an [Await.t] is just a {!Sync.t} and a {!Terminator.t}. Since
+    [Await.t] is intended to be used for blocking for an unbounded period of time, it's
+    important to make sure that if the thread that we're waiting on exits or is
+    terminated, this thread is also terminated. *)
+type t : value mod contended non_float portable
 
 (** [terminator t] is the terminator associated with [t]. Awaiting operations should
     attempt to cancel themselves if they have been terminated, raising [Terminated] if
     they succeed in doing so. *)
 val terminator : t @ local -> Terminator.t @ local
 
+(** [sync t] is the implementation of synchronizing associated with [t] *)
+val sync : t @ local -> Sync.t @ local
+
 (** [await t ~on_terminate ~await_on] will use [t] to attach [on_terminate] to be
     signalled on termination and to wait until [await_on] has been signaled.
 
     Note that the [on_terminate] trigger may not be used by [await]. The [await_on]
     trigger will be used before [await] returns. *)
-val await : t @ local -> on_terminate:Trigger.Source.t -> await_on:Trigger.t -> unit
+val await : t @ local -> on_terminate:Trigger.Source.t -> on:Trigger.t -> unit
 
 (** [await_until_terminated t trigger] is equivalent to
     [await t ~on_terminate:(Trigger.source trigger) ~await_on:trigger]. *)
@@ -103,6 +89,12 @@ val await_never_terminated : t @ local -> Trigger.t -> unit
     @raise [Terminated] if the terminator associated with [t] has been terminated. *)
 val yield : t @ local -> unit
 
+(** [is_canceled t c] is [Cancellation.is_canceled c ~terminator:(terminator t)]. *)
+val is_canceled : t @ local -> Cancellation.t @ local -> bool
+
+(** [check_canceled t c] is [Cancellation.check c ~terminator:(terminator t)]. *)
+val check_canceled : t @ local -> Cancellation.t @ local -> unit Or_canceled.t
+
 module For_testing : sig
   (** [with_never ~f] calls [f] with an implementation of awaiting that should never be
       used. If [await] is called with the implementation, it will raise.
@@ -117,4 +109,13 @@ module For_testing : sig
     : ('r : value_or_null).
     f:(t @ local -> 'r @ forkable local once unique) @ local once
     -> 'r @ forkable local once unique
+end
+
+(**/**)
+
+module Expert : sig
+  (** [create ~sync ~terminator] is an [Await.t] that has [terminator] as its terminator
+      and uses [sync] to block the current thread. *)
+  val%template create : sync:Sync.t @ l -> terminator:Terminator.t @ l -> t @ l
+  [@@alloc a @ l = (stack_local, heap_global)]
 end

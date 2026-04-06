@@ -19,14 +19,19 @@
 
 (** [t] is the type of cancellation tokens. Tokens become canceled by calls to
     [Source.cancel]. *)
-type t : value mod contended portable
+type t = Cancellation0.t
 
-(** [is_canceled t] is [true] if [t] has been canceled and [false] otherwise. Once
-    [is_canceled t] is [true] it will never again become [false]. *)
-val is_canceled : t @ local -> bool
+(** [is_canceled t ~terminator] is [true] if [t] has been canceled and [false] otherwise.
+    Once [is_canceled t ~terminator] is [true] it will never again become [false].
 
-(** [check t] is [Canceled] if [t] has been canceled, or [Completed ()] otherwise. *)
-val check : t @ local -> unit Or_canceled.t
+    @raise {!Terminator.Terminated} if [terminator] has been terminated. *)
+val is_canceled : t @ local -> terminator:Terminator.t @ local -> bool
+
+(** [check t ~terminator] is [Canceled] if [t] has been canceled, or [Completed ()]
+    otherwise.
+
+    @raise {!Terminator.Terminated} if [terminator] has been terminated. *)
+val check : t @ local -> terminator:Terminator.t @ local -> unit Or_canceled.t
 
 (** [same t1 t2] determines whether the tokens [t1] and [t2] are the one and the same. *)
 val same : t @ local -> t @ local -> bool
@@ -40,7 +45,7 @@ val always : t
 module Source : sig
   (** [t] is the type of cancellation token source that can be used to cause an associated
       token to become canceled. *)
-  type t : value mod contended portable
+  type t : value mod contended non_float portable
 
   (** [cancel t] makes any tokens associated with [t] canceled. It will signal the
       triggers for any linked tokens. *)
@@ -114,6 +119,11 @@ module Expert : sig
       should arrange for the token to be canceled after it is no longer needed to ensure
       that any attached resources will be cleaned up. *)
   val create : unit -> t
+
+  (** [is_canceled_ignore_termination t] is [true] if [t] has been canceled and [false]
+      otherwise. Unlike {!is_canceled}, this version does not take a terminator, so should
+      only be used where termination is already being handled separately. *)
+  val is_canceled_ignore_termination : t @ local -> bool
 end
 
 module For_testing : sig

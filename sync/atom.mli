@@ -11,7 +11,7 @@ open Await_kernel
     approach adds a bit of overhead over [Atomic] and [Awaitable], but should make [Atom]
     easier to use. *)
 
-type !'a t : value mod contended portable
+type !'a t : value mod contended non_float portable
 
 (** [make value] creates an atom with the given initial [value].
 

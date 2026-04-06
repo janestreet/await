@@ -3,4 +3,4 @@
  (public_name await.kernel)
  (libraries base portable.kernel)
  (preprocess
-  (pps ppx_jane ppx_fuelproof)))
+  (pps ppx_jane -compare-require-explicit-locality ppx_fuelproof)))

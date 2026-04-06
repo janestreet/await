@@ -2,7 +2,7 @@
 
 open Await_kernel
 
-type 'k t : value mod contended portable
+type 'k t : value mod contended forkable many non_float portable unyielding
 
 val create : ?padded:bool @ local -> unit -> 'k t
 

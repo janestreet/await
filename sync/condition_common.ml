@@ -1,5 +1,5 @@
-open Base
-open Await_kernel
+open! Base
+open! Import
 
 type 'k t = bool Awaitable.t
 
@@ -20,7 +20,7 @@ let[@inline] wait ~acquire ~release w t ~lock _k =
   then (
     match raise Await.Terminated with
     | (_ : Nothing.t) -> .)
-  else Capsule.Expert.Key.unsafe_mk ()
+  else Capsule.Key.unsafe_mk ()
 ;;
 
 let signal = Awaitable.signal
