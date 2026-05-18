@@ -2,14 +2,17 @@
 
 open! Base
 
-(** [Sync.t] is the type of implementations of synchronization. Operations which might
-    need to synchronize with other threads for a {i bounded} amount of time, eg to acquire
-    a lock, take a [Sync.t] which provides an implementation of synchronization for them
-    to use.
+(** Abstract implementation of {i bounded} awaiting.
 
-    Usually, you should use the [Sync.t] provided by a parallelism or concurrency
-    scheduler, but if you don't have one available you can use [Await_blocking.sync]
+    Operations which might need to synchronize with other threads for a {i bounded} amount
+    of time, eg to acquire a lock, take a {{!t} [Sync.t]} which provides an implementation
+    of synchronization for them to use.
+
+    Usually, you should use the {{!t} [Sync.t]} provided by a parallelism or concurrency
+    scheduler, but if you don't have one available you can use [Sync_blocking.sync]
     instead. *)
+
+(** Represents the capability to block for a {i bounded} amount of time. *)
 type t : value mod contended non_float portable
 
 (** [with_ ~yield ~sync ctx ~f] calls [f] with an implementation of synchronization such

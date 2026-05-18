@@ -1,20 +1,22 @@
 open! Base
 open! Import
 
-(*=The underlying state machine of an ivar:
+(* The underlying state machine of an ivar:
 
-                                                     [create_full]
-                                                           |
-                                                           v
-    [create]--> Empty --[read]--> Awaiters --[fill_*]--> Value
-                  |                                        ^
-                  |                                        |
-                  +----------------------------------------+
+   {v
+                                                      [create_full]
+                                                            |
+                                                            v
+     [create]--> Empty --[read]--> Awaiters --[fill_*]--> Value
+                   |                                        ^
+                   |                                        |
+                   +----------------------------------------+
+   v}
 
    The [Value] state is terminal. *)
 
 module State : sig @@ portable
-  type +'a t : immutable_data with 'a @@ contended portable
+  type (+'a : value_or_null) t : immutable_data with 'a @@ contended portable
   (*== | Empty
        | Awaiters
        | Value of 'a @@ contended portable
@@ -22,18 +24,18 @@ module State : sig @@ portable
 
   (** Constructors *)
 
-  val empty : 'a t
-  val awaiters : 'a t
-  val of_value : 'a @ contended portable -> 'a t
+  val empty : ('a : value_or_null). 'a t
+  val awaiters : ('a : value_or_null). 'a t
+  val of_value : ('a : value_or_null). 'a @ contended portable -> 'a t
 
   (** Destructors *)
 
-  val is_empty : 'a t @ contended local -> bool
-  val is_awaiters : 'a t @ contended local -> bool
+  val is_empty : ('a : value_or_null). 'a t @ contended local -> bool
+  val is_awaiters : ('a : value_or_null). 'a t @ contended local -> bool
   val value_opt : 'a t @ contended -> 'a or_null @ contended portable
-  val value_unsafe : 'a t @ contended -> 'a @ contended portable
+  val value_unsafe : ('a : value_or_null). 'a t @ contended -> 'a @ contended portable
 end = struct
-  type +'a t : immutable_data with 'a @@ contended portable
+  type (+'a : value_or_null) t : immutable_data with 'a @@ contended portable
 
   let empty = (Obj.magic [@mode contended portable]) (ref 0)
   let awaiters = (Obj.magic [@mode contended portable]) (ref 1)
@@ -52,7 +54,7 @@ end = struct
   ;;
 end
 
-type 'a t = { t : 'a State.t Awaitable.t } [@@unboxed]
+type ('a : value_or_null) t = { t : 'a State.t Awaitable.t } [@@unboxed]
 
 let create () = { t = Awaitable.make State.empty }
 let create_full v = { t = Awaitable.make (State.of_value v) }
@@ -61,7 +63,7 @@ type on_full =
   | Drop
   | Raise
 
-let fill_as (type a) ({ t } : a t) (v : a @ portable) on_empty =
+let fill_as (type a : value_or_null) ({ t } : a t) (v : a @ portable) on_empty =
   let v = State.of_value v in
   let before = Awaitable.get t in
   let[@inline] try_empty t =
@@ -87,11 +89,18 @@ let fill_as (type a) ({ t } : a t) (v : a @ portable) on_empty =
 let fill_if_empty t v = fill_as t v Drop
 let fill_exn t v = fill_as t v Raise
 
-type ('a, _) result =
-  | Value : ('a, 'a) result
-  | Or_canceled : ('a, 'a Or_canceled.t) result
+type ('a : value_or_null, 'r : value_or_null) result =
+  | Value : ('a : value_or_null). ('a, 'a) result
+  | Or_canceled : ('a : value_or_null). ('a, 'a Or_canceled.t) result
 
-let read_as (type a r) w c ({ t } : a t) (r : (a, r) result) : r =
+let read_as
+  (type (a : value_or_null) (r : value_or_null))
+  w
+  c
+  ({ t } : a t)
+  (r : (a, r) result)
+  : r
+  =
   let value_or_empty_or_awaiters = Awaitable.get t in
   let value_or_awaiters =
     if State.is_empty value_or_empty_or_awaiters

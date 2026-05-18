@@ -4,17 +4,18 @@ open! Import
 (** See [Adaptive_backoff.once] *)
 let log_scale = 10
 
-(*=The underlying state machine of an mvar:
+(* The underlying state machine of an mvar:
 
-                                                    [create_full]
-                  +--[set]-----------------------------+  |
-                  |                                    v  v
-    [create]--> Empty --[read]--> Readers --[set_*]--> Value --[take_*]--+
-                ^ |                                        ^             |
-                | |                                        |             |
-                | +---------------------------------------+              |
-                +--------------------------------------------------------+
-
+   {v
+                                                     [create_full]
+                   +--[set]-----------------------------+  |
+                   |                                    v  v
+     [create]--> Empty --[read]--> Readers --[set_*]--> Value --[take_*]--+
+                  ^ |                                     ^               |
+                  | |                                     |               |
+                  | +-------------------------------------+               |
+                  +-------------------------------------------------------+
+   v}
 
    An implementation note: we don't try to differentiate between "Value, and there are
    waiting putters" and "Value, but there aren't any waiting putters", and hence call

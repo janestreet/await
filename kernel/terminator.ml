@@ -1,8 +1,6 @@
 open! Base
 open! Portable_kernel
-
-(** [Terminated] is an exception indicating that an operation has been terminated. *)
-exception Terminated
+open Await_kernel_intf
 
 let () =
   Stdlib.Printexc.Safe.register_printer (function
@@ -15,7 +13,7 @@ type t = Cancellation0.t
 let is_terminated = Cancellation0.is_canceled
 let check t = if is_terminated t then raise Terminated
 let same = Cancellation0.same
-let never = Cancellation0.never
+let unkillable = Cancellation0.never
 let always = Cancellation0.always
 
 module Source = struct
@@ -47,6 +45,9 @@ module Link = struct
 end
 
 let add_trigger t s = Link.of_cancellation (Cancellation0.add_trigger t s)
-let cancellation t = t
 
-module Expert = Cancellation0.Expert
+module Expert = struct
+  include Cancellation0.Expert
+
+  let cancellation t = t
+end

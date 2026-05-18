@@ -105,4 +105,39 @@ external portended_list
 
 let drain t = Awaitable.exchange t [] |> portended_list
 
+let drain_blocking await t =
+  let[@inline] rec loop () =
+    match Awaitable.get t with
+    | [] ->
+      (match Awaitable.await await t ~until_phys_unequal_to:[] with
+       | Terminated -> raise Await.Terminated
+       | Signaled -> loop ())
+    | _ :: _ ->
+      (match Awaitable.exchange t [] with
+       | [] ->
+         Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+         loop ()
+       | _ :: _ as list -> portended_list list)
+  in
+  loop () [@nontail]
+;;
+
+let drain_blocking_or_cancel await c t =
+  let[@inline] rec loop () =
+    match Awaitable.get t with
+    | [] ->
+      (match Awaitable.await_or_cancel await c t ~until_phys_unequal_to:[] with
+       | Terminated -> raise Await.Terminated
+       | Canceled -> Or_canceled.Canceled
+       | Signaled -> loop ())
+    | _ :: _ ->
+      (match Awaitable.exchange t [] with
+       | [] ->
+         Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+         loop ()
+       | _ :: _ as list -> Completed (portended_list list))
+  in
+  loop () [@nontail]
+;;
+
 module For_testing = Awaitable.For_testing

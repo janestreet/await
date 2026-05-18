@@ -29,8 +29,8 @@ type !'a
 val with_
   :  Await.t @ local
   -> 'a @ portable
-  -> f:(Await.t @ local -> 'a t @ local -> 'b) @ local once unyielding
-  -> 'b
+  -> f:(Await.t @ local -> 'a t @ local -> 'b @ once unique) @ local once unyielding
+  -> 'b @ once unique
 
 module Global : sig
   (** Allows creating non-local scopes for performing unstructured concurrency. *)

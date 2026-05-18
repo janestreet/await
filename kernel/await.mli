@@ -2,24 +2,32 @@
 
 open Base
 
-(** [Terminated] is an exception indicating that an operation has been terminated. *)
-exception Terminated
+(** Abstract implementation of {i unbounded} awaiting.
 
-(** [Await.t] is the type of implementations of awaiting. Operations that need to block
-    the current thread for an {i unbounded} amount of time take an [Await.t] which
-    provides an implementation of awaiting for them to use.
+    Operations that need to block the current thread for an {i unbounded} amount of time
+    take an {{!t} [Await.t]} which provides an implementation of awaiting for them to use.
+
+    In practice, code which needs an {{!t} [Await.t]} should get one out of an
+    implementation of concurrency by calling [Concurrent.await].
 
     Any awaiting operation can be terminated by the awaiting implementation, which results
-    in a [Terminated] exception being raised.
+    in a {!Terminated} exception being raised.
 
-    Under the hood, an [Await.t] is just a {!Sync.t} and a {!Terminator.t}. Since
-    [Await.t] is intended to be used for blocking for an unbounded period of time, it's
-    important to make sure that if the thread that we're waiting on exits or is
+    Under the hood, an {{!t} [Await.t]} is just a {!Sync.t} and a {!Terminator.t}. Since
+    {{!t} [Await.t]} is intended to be used for blocking for an unbounded period of time,
+    it's important to make sure that if the thread that we're waiting on exits or is
     terminated, this thread is also terminated. *)
+
+(** Represents the capability to block for an {i unbounded} amount of time. *)
 type t : value mod contended non_float portable
 
+(** @inline *)
+include module type of struct
+  include Await_kernel_intf (** @inline *)
+end
+
 (** [terminator t] is the terminator associated with [t]. Awaiting operations should
-    attempt to cancel themselves if they have been terminated, raising [Terminated] if
+    attempt to cancel themselves if they have been terminated, raising {!Terminated} if
     they succeed in doing so. *)
 val terminator : t @ local -> Terminator.t @ local
 
@@ -51,7 +59,7 @@ val await_until_terminated_or_canceled
 val await_with_terminate
   :  t @ local
   -> Trigger.t
-  -> terminate:('r @ contended once portable unique -> unit) @ once portable
+  -> terminate:('r @ contended once portable unique -> unit) @ global once portable
   -> 'r @ contended once portable unique
   -> unit
 
@@ -62,7 +70,8 @@ val await_with_terminate_or_cancel
   :  t @ local
   -> Cancellation.t @ local
   -> Trigger.t
-  -> terminate_or_cancel:('r @ contended once portable unique -> unit) @ once portable
+  -> terminate_or_cancel:('r @ contended once portable unique -> unit)
+     @ global once portable
   -> 'r @ contended once portable unique
   -> unit
 
@@ -73,20 +82,20 @@ val is_terminated : t @ local -> bool
     [new_terminator].
 
     The main use case of [with_terminator] is to protect a blocking operation from being
-    terminated by replacing the terminator with {!Terminator.never}:
+    terminated by replacing the terminator with {!Terminator.unkillable}:
     {[
-      blocking_operation (with_terminator t Terminator.never)
+      blocking_operation (with_terminator t Terminator.unkillable)
     ]} *)
 val with_terminator : t @ local -> Terminator.t @ local -> t @ local
 
 (** [await_never_terminated t trigger] is
-    [await_until_terminated (with_terminator t Terminator.never) trigger]. *)
+    [await_until_terminated (with_terminator t Terminator.unkillable) trigger]. *)
 val await_never_terminated : t @ local -> Trigger.t -> unit
 
 (** [yield t] yields to the scheduler using the implementation of yielding associated with
     [t].
 
-    @raise [Terminated] if the terminator associated with [t] has been terminated. *)
+    @raise Terminated if the terminator associated with [t] has been terminated. *)
 val yield : t @ local -> unit
 
 (** [is_canceled t c] is [Cancellation.is_canceled c ~terminator:(terminator t)]. *)
@@ -117,5 +126,10 @@ module Expert : sig
   (** [create ~sync ~terminator] is an [Await.t] that has [terminator] as its terminator
       and uses [sync] to block the current thread. *)
   val%template create : sync:Sync.t @ l -> terminator:Terminator.t @ l -> t @ l
+  [@@alloc a @ l = (stack_local, heap_global)]
+
+  (** [with_sync t sync] is an [Await.t] with the same terminator as [t] that uses [sync]
+      to suspend. *)
+  val%template with_sync : t @ l -> Sync.t @ l -> t @ l
   [@@alloc a @ l = (stack_local, heap_global)]
 end

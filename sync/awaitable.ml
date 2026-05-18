@@ -272,7 +272,7 @@ let rec resume t all_or_first =
     then
       List.iter
         ~f:(fun (Awaiter awaiter) -> Trigger.Source.signal awaiter.trigger)
-        to_signal
+        to_signal [@nontail]
     else (
       Adaptive_backoff.once
         ~random_key:(random_key_for_queue t)
@@ -292,7 +292,7 @@ let await_or_cancel_as w cancellation t comparand on_canceled =
   add t.inner awaiter;
   (* Now that the [awaiter] has been added to the queue we are guaranteed not to miss a
      signal, but it is possible that a signal happened concurrently with adding the
-     awaiter and before suspending the fiber we must check whether the value of the
+     awaiter and before suspending the task we must check whether the value of the
      awaitable is equal to [comparand] or not. *)
   if phys_equal (get t) comparand
   then (

@@ -2,19 +2,21 @@
 
 (** A trigger represents the ability to await for or react to a signal.
 
-    To use a trigger, one [create]s a trigger and arranges for [signal] to be called on
-    the [source] of the trigger.
+    To use a trigger, one {!create}s a trigger and arranges for {{!Source.signal}
+    [signal]} to be called on the {!source} of the trigger.
 
-    To use a trigger to react to a signal, one may call [on_signal] to register a callback
-    with the trigger. Only a single callback can be registered with each trigger. Because
-    the registered callback may be called from an unknown context, the callback should be
-    essentially wait-free and should not raise exceptions.
+    To use a trigger to react to a signal, one may call {!on_signal} to register a
+    callback with the trigger. Only a single callback can be registered with each trigger.
+    Because the registered callback may be called from an unknown context, the callback
+    should be essentially wait-free and should not raise exceptions.
 
-    The most common way to use a trigger is to await on it with an [Await.t]. To do so,
+    The most common way to use a trigger is to await on it with an {!Await.t}. To do so,
     one must not register an action with the sink: the scheduler will instead register its
     own callback to resume the awaiter. *)
 
 module Source : sig
+  (** Source for signaling a trigger. *)
+
   (** [t] is the type of sources of triggers. A source can be used to signal the
       associated trigger. *)
   type t : value mod contended non_float portable
@@ -22,15 +24,14 @@ module Source : sig
   (** [same l r] determines whether [l] and [r] are the one and the same trigger. *)
   val same : t @ local -> t @ local -> bool
 
-  (** [signal t] signals [t], running the callback registered with [on_signal t] if it
-      exists. If [t] is already signalled then [signal t] does nothing. *)
+  (** [signal t] signals [t], running the callback registered with {{!on_signal}
+      [on_signal t ~f k]} if it exists. If [t] is already signalled then [signal t] does
+      nothing. *)
   val signal : t @ local -> unit
 
   (** [is_signalled t] is [true] if [t] has been signalled and [false] if it is
       unsignalled. *)
   val is_signalled : t @ local -> bool
-
-  (**/**)
 
   module For_testing : sig
     (** [signal_if_awaiting t] signals [t] only if the [t] is in the waiting state. This
@@ -55,7 +56,7 @@ val is_signalled : t @ local -> bool
     if [t] already has a registered callback. *)
 val on_signal
   :  t @ local
-  -> f:('k @ contended once portable unique -> unit) @ once portable
+  -> f:('k @ contended once portable unique -> unit) @ global once portable
   -> 'k @ contended once portable unique
   -> 'k or_null @ contended once portable unique
 
@@ -70,7 +71,7 @@ val drop : t @ local -> bool
 (** [create ()] creates a new unsignalled trigger.
 
     If a trigger is potentially added to a cancellation or termination token, then the
-    trigger must be used. To use a trigger, either [Source.signal] or [drop] must be
+    trigger must be used. To use a trigger, either {!Source.signal} or {!drop} must be
     called on it. *)
 val create : unit -> t
 
@@ -78,19 +79,19 @@ val create : unit -> t
     resource [k] registered with it.
 
     If a trigger is potentially added to a cancellation or termination token, then the
-    trigger must be used. To use a trigger, either [Source.signal] or [drop] must be
+    trigger must be used. To use a trigger, either {!Source.signal} or {!drop} must be
     called on it.
 
     Equivalent to:
     {[
-      let create_with_action action k =
+      let create_with_action ~f k =
         let trigger = create () in
-        let _ : bool = on_signal trigger action k in
+        let _ : bool = on_signal trigger ~f k in
         trigger
       ;;
     ]} *)
 val create_with_action
-  :  f:('k @ contended once portable unique -> unit) @ once portable
+  :  f:('k @ contended once portable unique -> unit) @ global once portable
   -> 'k @ contended once portable unique
   -> t
 

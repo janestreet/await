@@ -45,7 +45,10 @@ module type Capsule = sig @@ portable
 
     module Mutex : sig
       type 'k t = 'k Sync.Mutex.t
-      type packed = P : 'k t -> packed
+
+      [@@@ocaml.warning "-incompatible-with-upstream"]
+
+      type packed = P : 'k t -> packed [@@unboxed]
 
       (** Creates a mutex with a fresh existential key type. *)
       val create : unit -> packed
@@ -123,9 +126,9 @@ module type Capsule = sig @@ portable
           containing the result *)
       val create : (unit -> 'a) @ local once portable -> 'a t
 
-      (** [of_isolated isolated] creates a [Capsule.With_mutex.t] from a value in an
-          isolated capsule, consuming the isolated capsule. *)
-      val of_isolated : 'a Capsule.Isolated.t @ unique -> 'a t
+      (** [of_owned owned] creates a [Capsule.With_mutex.t] from a value in an owned
+          capsule, consuming the owned capsule. *)
+      val of_owned : 'a Capsule.Owned.t @ unique -> 'a t
 
       (** [with_lock s t ~f] locks the mutex associated with [t] and calls [f] on the
           protected value, returning the result. The [Sync.t] is passed to [f] to allow
@@ -149,8 +152,8 @@ module type Capsule = sig @@ portable
            @ local once portable unyielding
         -> 'b Or_canceled.t @ contended portable
 
-      (** [with_guard sync t ~f] locks the mutex associated with [t] and calls [f] with
-          the provided [sync] and a [Guard.t] for the protected data, returning the
+      (** [with_scoped sync t ~f] locks the mutex associated with [t] and calls [f] with
+          the provided [sync] and a [Scoped.t] for the protected data, returning the
           result.
 
           Since the provided callback does not have to be [portable], this is useful when
@@ -171,34 +174,34 @@ module type Capsule = sig @@ portable
               -> int ref Capsule.Sync.With_mutex.t -> unit
               =
               fun sync ref1 ref2 ->
-              Capsule.Sync.With_mutex.with_guard sync ref1 ~f:(fun sync guard1 ->
-                Capsule.Sync.With_mutex.with_guard sync ref2 ~f:(fun _sync guard2 ->
+              Capsule.Sync.With_mutex.with_scoped sync ref1 ~f:(fun sync scope1 ->
+                Capsule.Sync.With_mutex.with_scoped sync ref2 ~f:(fun _sync scope2 ->
                   (* At this point we have both mutexes locked, so we can freely
                      manipulate the data they protect without the potential for data races *)
-                  let value1 = Capsule.Guard.get guard1 ~f:(fun r -> !r) in
-                  let value2 = Capsule.Guard.get guard2 ~f:(fun r -> !r) in
+                  let value1 = Capsule.Scoped.get scope1 ~f:(fun r -> !r) in
+                  let value2 = Capsule.Scoped.get scope2 ~f:(fun r -> !r) in
                   let new_value = Int.max value1 value2 in
-                  Capsule.Guard.iter guard1 ~f:(fun r -> r := new_value);
-                  Capsule.Guard.iter guard2 ~f:(fun r -> r := new_value) [@nontail])
+                  Capsule.Scoped.iter scope1 ~f:(fun r -> r := new_value);
+                  Capsule.Scoped.iter scope2 ~f:(fun r -> r := new_value) [@nontail])
                 [@nontail])
               [@nontail]
             ;;
           ]} *)
-      val with_guard
+      val with_scoped
         : 'a ('b : value_or_null).
         Sync.t @ local
         -> 'a t
-        -> f:(Sync.t @ local -> 'a Guard.t @ local -> 'b) @ local once unyielding
+        -> f:(Sync.t @ local -> 'a Scoped.t @ local -> 'b) @ local once unyielding
         -> 'b
 
-      (** [with_guard_or_cancel s c t ~f] is [Completed (with_guard s t ~f)] if [c] is not
-          canceled, otherwise it is [Canceled]. *)
-      val with_guard_or_cancel
+      (** [with_scoped_or_cancel s c t ~f] is [Completed (with_scoped s t ~f)] if [c] is
+          not canceled, otherwise it is [Canceled]. *)
+      val with_scoped_or_cancel
         : 'a ('b : value_or_null).
         Sync.t @ local
         -> Cancellation.t @ local
         -> 'a t
-        -> f:(Sync.t @ local -> 'a Guard.t @ local -> 'b) @ local once unyielding
+        -> f:(Sync.t @ local -> 'a Scoped.t @ local -> 'b) @ local once unyielding
         -> 'b Or_canceled.t
 
       (** Functions that poison the mutex if the provided callback raises an exception. *)
@@ -257,7 +260,10 @@ module type Capsule = sig @@ portable
 
     module Rwlock : sig
       type 'k t = 'k Sync.Rwlock.t
-      type packed = P : 'k t -> packed
+
+      [@@@ocaml.warning "-incompatible-with-upstream"]
+
+      type packed = P : 'k t -> packed [@@unboxed]
 
       (** Creates a reader-writer lock with a fresh existential key type. *)
       val create : unit -> packed
@@ -327,7 +333,10 @@ module type Capsule = sig @@ portable
           -> 'a @ contended portable
 
         (** [with_write_or_cancel s c t ~f] is [Completed (with_write s t ~f)] if [c] is
-            not canceled, otherwise it is [Canceled]. *)
+            not canceled, otherwise it is [Canceled].
+
+            If [f] raises, [t] will be poisoned, meaning all subsequent attempts to
+            acquire it will raise. *)
         val with_write_or_cancel
           : 'k 'a ('b : value_or_null).
           Sync.t @ local
@@ -352,7 +361,10 @@ module type Capsule = sig @@ portable
           -> 'a @ contended portable
 
         (** [with_read_or_cancel s c t ~f] is [Completed (with_read s t ~f)] if [c] is not
-            canceled, otherwise it is [Canceled]. *)
+            canceled, otherwise it is [Canceled].
+
+            If [f] raises, [t] will be frozen, meaning all subsequent attempts to acquire
+            it for writing will raise. *)
         val with_read_or_cancel
           : 'k 'a ('b : value_or_null).
           Sync.t @ local
@@ -380,9 +392,9 @@ module type Capsule = sig @@ portable
           [Capsule.With_rwlock.t] containing the result *)
       val create : (unit -> 'a) @ local once portable -> 'a t
 
-      (** [of_isolated isolated] creates a [Capsule.With_rwlock.t] from a value in an
-          isolated capsule, consuming the isolated capsule. *)
-      val of_isolated : 'a Capsule.Isolated.t @ unique -> 'a t
+      (** [of_owned owned] creates a [Capsule.With_rwlock.t] from a value in an owned
+          capsule, consuming the owned capsule. *)
+      val of_owned : 'a Capsule.Owned.t @ unique -> 'a t
 
       (** [with_write s t ~f] locks the reader-writer lock associated with [t] for writing
           and calls [f] on the protected value, returning the result. The [Sync.t] is
@@ -406,28 +418,28 @@ module type Capsule = sig @@ portable
            @ local once portable unyielding
         -> 'b Or_canceled.t @ contended portable
 
-      (** [with_write_guard s t ~f] locks the reader-writer lock associated with [t] for
-          writing and calls [f] with the provided [sync] and a [Guard.t] for the protected
-          data, returning the result.
+      (** [with_scoped s t ~f] locks the reader-writer lock associated with [t] for
+          writing and calls [f] with the provided [sync] and a [Scoped.t] for the
+          protected data, returning the result.
 
           Since the provided callback does not have to be [portable], this is useful when
           you need to acquire two mutexes for different capsules at the same time and move
-          data between them. See {!With_mutex.with_guard} for an example. *)
-      val with_write_guard
+          data between them. See {!With_mutex.with_scoped} for an example. *)
+      val with_scoped
         : 'a ('b : value_or_null).
         Sync.t @ local
         -> 'a t
-        -> f:(Sync.t @ local -> 'a Guard.t @ local -> 'b) @ local once unyielding
+        -> f:(Sync.t @ local -> 'a Scoped.t @ local -> 'b) @ local once unyielding
         -> 'b
 
-      (** [with_write_guard_or_cancel s c t ~f] is [Completed (with_write_guard s t ~f)]
-          if [c] is not canceled, otherwise it is [Canceled]. *)
-      val with_write_guard_or_cancel
+      (** [with_scoped_or_cancel s c t ~f] is [Completed (with_scoped s t ~f)] if [c] is
+          not canceled, otherwise it is [Canceled]. *)
+      val with_scoped_or_cancel
         : 'a ('b : value_or_null).
         Sync.t @ local
         -> Cancellation.t @ local
         -> 'a t
-        -> f:(Sync.t @ local -> 'a Guard.t @ local -> 'b) @ local once unyielding
+        -> f:(Sync.t @ local -> 'a Scoped.t @ local -> 'b) @ local once unyielding
         -> 'b Or_canceled.t
 
       (** [with_read s t ~f] locks the reader-writer lock associated with [t] for reading
@@ -452,24 +464,27 @@ module type Capsule = sig @@ portable
            @ local once portable unyielding
         -> 'b Or_canceled.t @ contended portable
 
-      (** [with_read_guard s t ~f] locks the reader-writer lock associated with [t] for
-          reading and calls [f] with the provided [sync] and a [Guard.Shared.t] for the
+      (** [with_scoped_shared s t ~f] locks the reader-writer lock associated with [t] for
+          reading and calls [f] with the provided [sync] and a [Scoped.Shared.t] for the
           protected data, returning the result. *)
-      val with_read_guard
+      val with_scoped_shared
         : ('a : value mod portable) ('b : value_or_null).
         Sync.t @ local
         -> 'a t
-        -> f:(Sync.t @ local -> 'a Guard.Shared.t @ local -> 'b) @ local once unyielding
+        -> f:(Sync.t @ local -> 'a Scoped.Shared.t @ forkable local -> 'b)
+           @ local once unyielding
         -> 'b
 
-      (** [with_read_guard_or_cancel s c t ~f] is [Completed (with_read_guard s t ~f)] if
-          [c] is not canceled, otherwise it is [Canceled]. *)
-      val with_read_guard_or_cancel
+      (** [with_scoped_shared_or_cancel s c t ~f] is
+          [Completed (with_scoped_shared s t ~f)] if [c] is not canceled, otherwise it is
+          [Canceled]. *)
+      val with_scoped_shared_or_cancel
         : ('a : value mod portable) ('b : value_or_null).
         Sync.t @ local
         -> Cancellation.t @ local
         -> 'a t
-        -> f:(Sync.t @ local -> 'a Guard.Shared.t @ local -> 'b) @ local once unyielding
+        -> f:(Sync.t @ local -> 'a Scoped.Shared.t @ forkable local -> 'b)
+           @ local once unyielding
         -> 'b Or_canceled.t
 
       (** Functions that poison or freeze the lock if the provided callback raises an
@@ -503,30 +518,31 @@ module type Capsule = sig @@ portable
              @ local once portable unyielding
           -> 'b Or_canceled.t @ contended portable
 
-        (** [with_write_guard s t ~f] locks the reader-writer lock associated with [t] for
-            writing and calls [f] with the provided [sync] and a [Guard.t] for the
-            protected data, returning the result.
+        (** [with_scoped s t ~f] locks the reader-writer lock associated with [t] for
+            writing and calls [f] with the provided [sync] and a [Scoped.t] for the
+            protected data, returning the result. The [Sync.t] is passed to [f] to allow
+            further use of synchronization primitives.
 
             If [f] raises, [t] will be poisoned, meaning all subsequent attempts to
             acquire it will raise. *)
-        val with_write_guard
+        val with_scoped
           : 'a ('b : value_or_null).
           Sync.t @ local
           -> 'a t
-          -> f:(Sync.t @ local -> 'a Guard.t @ local -> 'b) @ local once unyielding
+          -> f:(Sync.t @ local -> 'a Scoped.t @ local -> 'b) @ local once unyielding
           -> 'b
 
-        (** [with_write_guard_or_cancel s c t ~f] is [Completed (with_write_guard s t ~f)]
-            if [c] is not canceled, otherwise it is [Canceled].
+        (** [with_scoped_or_cancel s c t ~f] is [Completed (with_scoped s t ~f)] if [c] is
+            not canceled, otherwise it is [Canceled].
 
             If [f] raises, [t] will be poisoned, meaning all subsequent attempts to
             acquire it will raise. *)
-        val with_write_guard_or_cancel
+        val with_scoped_or_cancel
           : 'a ('b : value_or_null).
           Sync.t @ local
           -> Cancellation.t @ local
           -> 'a t
-          -> f:(Sync.t @ local -> 'a Guard.t @ local -> 'b) @ local once unyielding
+          -> f:(Sync.t @ local -> 'a Scoped.t @ local -> 'b) @ local once unyielding
           -> 'b Or_canceled.t
 
         (** [with_read s t ~f] locks the reader-writer lock associated with [t] for
@@ -556,6 +572,36 @@ module type Capsule = sig @@ portable
           -> f:(Sync.t @ local -> 'a @ shared -> 'b @ contended portable)
              @ local once portable unyielding
           -> 'b Or_canceled.t @ contended portable
+
+        (** [with_scoped_shared s t ~f] locks the reader-writer lock associated with [t]
+            for reading and calls [f] with the provided [sync] and a [Scoped.Shared.t] for
+            the protected data, returning the result. The [Sync.t] is passed to [f] to
+            allow further use of synchronization primitives.
+
+            If [f] raises, [t] will be frozen, meaning all subsequent attempts to acquire
+            it for writing will raise. *)
+        val with_scoped_shared
+          : ('a : value mod portable) ('b : value_or_null).
+          Sync.t @ local
+          -> 'a t
+          -> f:(Sync.t @ local -> 'a Scoped.Shared.t @ forkable local -> 'b)
+             @ local once unyielding
+          -> 'b
+
+        (** [with_scoped_shared_or_cancel s c t ~f] is
+            [Completed (with_scoped_shared s t ~f)] if [c] is not canceled, otherwise it
+            is [Canceled].
+
+            If [f] raises, [t] will be frozen, meaning all subsequent attempts to acquire
+            it for writing will raise. *)
+        val with_scoped_shared_or_cancel
+          : ('a : value mod portable) ('b : value_or_null).
+          Sync.t @ local
+          -> Cancellation.t @ local
+          -> 'a t
+          -> f:(Sync.t @ local -> 'a Scoped.Shared.t @ forkable local -> 'b)
+             @ local once unyielding
+          -> 'b Or_canceled.t
       end
 
       (** [iter_write s t ~f] is [with_write s t ~f], specialised to a function that
@@ -586,7 +632,10 @@ module type Capsule = sig @@ portable
 
     module Mutex : sig
       type 'k t = 'k Await.Mutex.t
-      type packed = P : 'k t -> packed
+
+      [@@@ocaml.warning "-incompatible-with-upstream"]
+
+      type packed = P : 'k t -> packed [@@unboxed]
 
       (** Creates a mutex with a fresh existential key type. *)
       val create : unit -> packed
@@ -660,9 +709,9 @@ module type Capsule = sig @@ portable
           containing the result *)
       val create : (unit -> 'a) @ local once portable -> 'a t
 
-      (** [of_isolated isolated] creates a [Capsule.With_mutex.t] from a value in an
-          isolated capsule, consuming the isolated capsule. *)
-      val of_isolated : 'a Capsule.Isolated.t @ unique -> 'a t
+      (** [of_owned owned] creates a [Capsule.With_mutex.t] from a value in an owned
+          capsule, consuming the owned capsule. *)
+      val of_owned : 'a Capsule.Owned.t @ unique -> 'a t
 
       (** [with_lock await t ~f] locks the mutex associated with [t] and calls [f] on the
           protected value, returning the result. If [t] is locked, [with_lock] uses
@@ -684,9 +733,9 @@ module type Capsule = sig @@ portable
         -> f:('a -> 'b @ contended portable) @ local once portable
         -> 'b Or_canceled.t @ contended portable
 
-      (** [with_guard await t ~f] locks the mutex associated with [t] and calls [f] with a
-          [Guard.t] for the protected data, returning the result. If [t] is locked,
-          [with_guard] uses [await] to wait until it is unlocked.
+      (** [with_scoped await t ~f] locks the mutex associated with [t] and calls [f] with
+          a [Scoped.t] for the protected data, returning the result. If [t] is locked,
+          [with_scoped] uses [await] to wait until it is unlocked.
 
           Since the provided callback does not have to be [portable], this is useful when
           you need to acquire two mutexes for different capsules at the same time and move
@@ -703,31 +752,31 @@ module type Capsule = sig @@ portable
               -> int ref Capsule.Await.With_mutex.t -> unit
               =
               fun await ref1 ref2 ->
-              Capsule.Await.With_mutex.with_guard await ref1 ~f:(fun guard1 ->
-                Capsule.Await.With_mutex.with_guard await ref2 ~f:(fun guard2 ->
+              Capsule.Await.With_mutex.with_scoped await ref1 ~f:(fun guard1 ->
+                Capsule.Await.With_mutex.with_scoped await ref2 ~f:(fun guard2 ->
                   (* At this point we have both mutexes locked, so we can freely
                      manipulate the data they protect without the potential for data races *)
-                  let value1 = Capsule.Guard.get guard1 ~f:(fun r -> !r) in
-                  let value2 = Capsule.Guard.get guard2 ~f:(fun r -> !r) in
+                  let value1 = Capsule.Scoped.get guard1 ~f:(fun r -> !r) in
+                  let value2 = Capsule.Scoped.get guard2 ~f:(fun r -> !r) in
                   let new_value = Int.max value1 value2 in
-                  Capsule.Guard.iter guard1 ~f:(fun r -> r := new_value);
-                  Capsule.Guard.iter guard2 ~f:(fun r -> r := new_value) [@nontail])
+                  Capsule.Scoped.iter guard1 ~f:(fun r -> r := new_value);
+                  Capsule.Scoped.iter guard2 ~f:(fun r -> r := new_value) [@nontail])
                 [@nontail])
               [@nontail]
             ;;
           ]} *)
-      val with_guard
+      val with_scoped
         : 'a ('b : value_or_null).
-        Await.t @ local -> 'a t -> f:('a Guard.t @ local -> 'b) @ local once -> 'b
+        Await.t @ local -> 'a t -> f:('a Scoped.t @ local -> 'b) @ local once -> 'b
 
-      (** [with_guard_or_cancel await c t ~f] is [Completed (with_guard await t ~f)] if
+      (** [with_scoped_or_cancel await c t ~f] is [Completed (with_scoped await t ~f)] if
           [c] is not canceled, otherwise it is [Canceled]. *)
-      val with_guard_or_cancel
+      val with_scoped_or_cancel
         : 'a ('b : value_or_null).
         Await.t @ local
         -> Cancellation.t @ local
         -> 'a t
-        -> f:('a Guard.t @ local -> 'b) @ local once
+        -> f:('a Scoped.t @ local -> 'b) @ local once
         -> 'b Or_canceled.t
 
       (** Functions that poison the mutex if the provided callback raises an exception. *)
@@ -746,7 +795,10 @@ module type Capsule = sig @@ portable
           -> 'b @ contended portable
 
         (** [with_lock_or_cancel await c t ~f] is [Completed (with_lock await t ~f)] if
-            [c] is not canceled, otherwise it is [Canceled]. *)
+            [c] is not canceled, otherwise it is [Canceled].
+
+            If [f] raises, [t] will be poisoned, meaning all subsequent attempts to
+            acquire it will raise. *)
         val with_lock_or_cancel
           : 'a ('b : value_or_null).
           Await.t @ local
@@ -772,7 +824,10 @@ module type Capsule = sig @@ portable
 
     module Rwlock : sig
       type 'k t = 'k Await.Rwlock.t
-      type packed = P : 'k t -> packed
+
+      [@@@ocaml.warning "-incompatible-with-upstream"]
+
+      type packed = P : 'k t -> packed [@@unboxed]
 
       (** Creates a reader-writer lock with a fresh existential key type. *)
       val create : unit -> packed
@@ -867,7 +922,10 @@ module type Capsule = sig @@ portable
           -> 'a @ contended portable
 
         (** [with_read_or_cancel await c t ~f] is [Completed (with_read await t ~f)] if
-            [c] is not canceled, otherwise it is [Canceled]. *)
+            [c] is not canceled, otherwise it is [Canceled].
+
+            If [f] raises, [t] will be frozen, meaning all subsequent attempts to acquire
+            it for writing will raise. *)
         val with_read_or_cancel
           : 'k 'a ('b : value_or_null).
           Await.t @ local
@@ -895,9 +953,9 @@ module type Capsule = sig @@ portable
           [Capsule.With_rwlock.t] containing the result *)
       val create : (unit -> 'a) @ local once portable -> 'a t
 
-      (** [of_isolated isolated] creates a [Capsule.With_rwlock.t] from a value in an
-          isolated capsule, consuming the isolated capsule. *)
-      val of_isolated : 'a Capsule.Isolated.t @ unique -> 'a t
+      (** [of_owned owned] creates a [Capsule.With_rwlock.t] from a value in an owned
+          capsule, consuming the owned capsule. *)
+      val of_owned : 'a Capsule.Owned.t @ unique -> 'a t
 
       (** [with_write await t ~f] locks the reader-writer lock associated with [t] for
           writing and calls [f] on the protected value, returning the result. If [t] is
@@ -919,27 +977,26 @@ module type Capsule = sig @@ portable
         -> f:('a -> 'b @ contended portable) @ local once portable
         -> 'b Or_canceled.t @ contended portable
 
-      (** [with_write_guard await t ~f] locks the reader-writer lock associated with [t]
-          for writing and calls [f] with a [Guard.t] for the protected data, returning the
-          result. If [t] is locked, [with_write_guard] uses [await] to wait until it is
+      (** [with_scoped await t ~f] locks the reader-writer lock associated with [t] for
+          writing and calls [f] with a [Scoped.t] for the protected data, returning the
+          result. If [t] is locked, [with_scoped] uses [await] to wait until it is
           unlocked.
 
           Since the provided callback does not have to be [portable], this is useful when
           you need to acquire two mutexes for different capsules at the same time and move
           data between them. See {!With_mutex.with_guard} for an example. *)
-      val with_write_guard
+      val with_scoped
         : 'a ('b : value_or_null).
-        Await.t @ local -> 'a t -> f:('a Guard.t @ local -> 'b) @ local once -> 'b
+        Await.t @ local -> 'a t -> f:('a Scoped.t @ local -> 'b) @ local once -> 'b
 
-      (** [with_write_guard_or_cancel await c t ~f] is
-          [Completed (with_write_guard await t ~f)] if [c] is not canceled, otherwise it
-          is [Canceled]. *)
-      val with_write_guard_or_cancel
+      (** [with_scoped_or_cancel await c t ~f] is [Completed (with_scoped await t ~f)] if
+          [c] is not canceled, otherwise it is [Canceled]. *)
+      val with_scoped_or_cancel
         : 'a ('b : value_or_null).
         Await.t @ local
         -> Cancellation.t @ local
         -> 'a t
-        -> f:('a Guard.t @ local -> 'b) @ local once
+        -> f:('a Scoped.t @ local -> 'b) @ local once
         -> 'b Or_canceled.t
 
       (** [with_read await t ~f] locks the reader-writer lock associated with [t] for
@@ -962,23 +1019,26 @@ module type Capsule = sig @@ portable
         -> f:('a @ shared -> 'b @ contended portable) @ local once portable
         -> 'b Or_canceled.t @ contended portable
 
-      (** [with_read_guard await t ~f] locks the reader-writer lock associated with [t]
-          for reading and calls [f] with a [Guard.Shared.t] for the protected data,
-          returning the result. If [t] is locked for writing, [with_read_guard] uses
+      (** [with_scoped_shared await t ~f] locks the reader-writer lock associated with [t]
+          for reading and calls [f] with a [Scoped.Shared.t] for the protected data,
+          returning the result. If [t] is locked for writing, [with_scoped_shared] uses
           [await] to wait until it is unlocked. *)
-      val with_read_guard
+      val with_scoped_shared
         : ('a : value mod portable) ('b : value_or_null).
-        Await.t @ local -> 'a t -> f:('a Guard.Shared.t @ local -> 'b) @ local once -> 'b
+        Await.t @ local
+        -> 'a t
+        -> f:('a Scoped.Shared.t @ forkable local -> 'b) @ local once
+        -> 'b
 
-      (** [with_read_guard_or_cancel await c t ~f] is
-          [Completed (with_read_guard await t ~f)] if [c] is not canceled, otherwise it is
-          [Canceled]. *)
-      val with_read_guard_or_cancel
+      (** [with_scoped_shared_or_cancel await c t ~f] is
+          [Completed (with_scoped_shared await t ~f)] if [c] is not canceled, otherwise it
+          is [Canceled]. *)
+      val with_scoped_shared_or_cancel
         : ('a : value mod portable) ('b : value_or_null).
         Await.t @ local
         -> Cancellation.t @ local
         -> 'a t
-        -> f:('a Guard.Shared.t @ local -> 'b) @ local once
+        -> f:('a Scoped.Shared.t @ forkable local -> 'b) @ local once
         -> 'b Or_canceled.t
 
       (** Functions that poison or freeze the lock if the provided callback raises an
@@ -998,7 +1058,10 @@ module type Capsule = sig @@ portable
           -> 'b @ contended portable
 
         (** [with_write_or_cancel await c t ~f] is [Completed (with_write await t ~f)] if
-            [c] is not canceled, otherwise it is [Canceled]. *)
+            [c] is not canceled, otherwise it is [Canceled].
+
+            If [f] raises, [t] will be poisoned, meaning all subsequent attempts to
+            acquire it will raise. *)
         val with_write_or_cancel
           : 'a ('b : value_or_null).
           Await.t @ local
@@ -1007,26 +1070,28 @@ module type Capsule = sig @@ portable
           -> f:('a -> 'b @ contended portable) @ local once portable
           -> 'b Or_canceled.t @ contended portable
 
-        (** [with_write_guard await t ~f] locks the reader-writer lock associated with [t]
-            for writing and calls [f] with a [Guard.t] for the protected value, returning
-            the result. If [t] is locked, [with_write_guard] uses [await] to wait until it
-            is unlocked.
+        (** [with_scoped await t ~f] locks the reader-writer lock associated with [t] for
+            writing and calls [f] with a [Scoped.t] for the protected value, returning the
+            result. If [t] is locked, [with_scoped] uses [await] to wait until it is
+            unlocked.
 
             If [f] raises, [t] will be poisoned, meaning all subsequent attempts to
             acquire it will raise. *)
-        val with_write_guard
+        val with_scoped
           : 'a ('b : value_or_null).
-          Await.t @ local -> 'a t -> f:('a Guard.t @ local -> 'b) @ local once -> 'b
+          Await.t @ local -> 'a t -> f:('a Scoped.t @ local -> 'b) @ local once -> 'b
 
-        (** [with_write_guard_or_cancel await c t ~f] is
-            [Completed (with_write_guard await t ~f)] if [c] is not canceled, or
-            [Canceled] otherwise. *)
-        val with_write_guard_or_cancel
+        (** [with_scoped_or_cancel await c t ~f] is [Completed (with_scoped await t ~f)]
+            if [c] is not canceled, or [Canceled] otherwise.
+
+            If [f] raises, [t] will be poisoned, meaning all subsequent attempts to
+            acquire it will raise. *)
+        val with_scoped_or_cancel
           : 'a ('b : value_or_null).
           Await.t @ local
           -> Cancellation.t @ local
           -> 'a t
-          -> f:('a Guard.t @ local -> 'b) @ local once
+          -> f:('a Scoped.t @ local -> 'b) @ local once
           -> 'b Or_canceled.t
 
         (** [with_read await t ~f] locks the reader-writer lock associated with [t] for
@@ -1043,7 +1108,10 @@ module type Capsule = sig @@ portable
           -> 'b @ contended portable
 
         (** [with_read_or_cancel await c t ~f] is [Completed (with_read await t ~f)] if
-            [c] is not canceled, otherwise it is [Canceled]. *)
+            [c] is not canceled, otherwise it is [Canceled].
+
+            If [f] raises, [t] will be frozen, meaning all subsequent attempts to acquire
+            it for writing will raise. *)
         val with_read_or_cancel
           : ('a : value mod portable) ('b : value_or_null).
           Await.t @ local
@@ -1052,29 +1120,32 @@ module type Capsule = sig @@ portable
           -> f:('a @ shared -> 'b @ contended portable) @ local once portable
           -> 'b Or_canceled.t @ contended portable
 
-        (** [with_read_guard await t ~f] locks the reader-writer lock associated with [t]
-            for reading and calls [f] with a [Guard.Shared.t] for the protected data,
-            returning the result. If [t] is locked for writing, [with_read_guard] uses
+        (** [with_scoped_shared await t ~f] locks the reader-writer lock associated with
+            [t] for reading and calls [f] with a [Scoped.Shared.t] for the protected data,
+            returning the result. If [t] is locked for writing, [with_scoped_shared] uses
             [await] to wait until it is unlocked.
 
             If [f] raises, [t] will be frozen, meaning all subsequent attempts to acquire
             it for writing will raise. *)
-        val with_read_guard
+        val with_scoped_shared
           : ('a : value mod portable) ('b : value_or_null).
           Await.t @ local
           -> 'a t
-          -> f:('a Guard.Shared.t @ local -> 'b) @ local once
+          -> f:('a Scoped.Shared.t @ forkable local -> 'b) @ local once
           -> 'b
 
-        (** [with_read_guard_or_cancel await c t ~f] is
-            [Completed (with_read_guard await t ~f)] if [c] is not canceled, otherwise it
-            is [Canceled]. *)
-        val with_read_guard_or_cancel
+        (** [with_scoped_shared_or_cancel await c t ~f] is
+            [Completed (with_scoped_shared await t ~f)] if [c] is not canceled, otherwise
+            it is [Canceled].
+
+            If [f] raises, [t] will be frozen, meaning all subsequent attempts to acquire
+            it for writing will raise. *)
+        val with_scoped_shared_or_cancel
           : ('a : value mod portable) ('b : value_or_null).
           Await.t @ local
           -> Cancellation.t @ local
           -> 'a t
-          -> f:('a Guard.Shared.t @ local -> 'b) @ local once
+          -> f:('a Scoped.Shared.t @ forkable local -> 'b) @ local once
           -> 'b Or_canceled.t
       end
 

@@ -44,8 +44,10 @@ end = struct
 
   (* The state looks like this:
 
-     Bit: [   0   | 1 to n/2-1 | n/2 to n-2 |    n-1   ] Use:
-     [ sense |  parties   |  awaiting  | poisoned ]
+     {v
+       Bit: [   0   | 1 to n/2-1 | n/2 to n-2 |    n-1   ]
+       Use: [ sense |  parties   |  awaiting  | poisoned ]
+     v}
 
      [awaiting] is the number of [parties] still being awaited for by or to arrive at the
      barrier. It starts equal to [parties], then counts down to 0.

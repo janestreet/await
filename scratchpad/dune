@@ -1,0 +1,6 @@
+(library
+ (name await_scratchpad)
+ (public_name await.scratchpad)
+ (libraries await_sync base capsule)
+ (preprocess
+  (pps ppx_jane)))

@@ -52,8 +52,9 @@ let never_completed = function
 module Exn = struct
   exception Canceled
 
-  let%template[@inline] catch (f @ local once) : (_ t[@kind k]) @ u =
-    match f () with
+  let%template[@inline] catch (f : (_ -> _ @ l p u) @ local once) : (_ t[@kind k]) @ l p u
+    =
+    match[@exclave_if_local l ~reasons:[ Will_return_unboxed ]] f #() with
     | value -> Completed value
     | exception Canceled -> Canceled
   [@@kind
@@ -65,6 +66,6 @@ module Exn = struct
       , (value_or_null & value_or_null) & value_or_null
       , word
       , word & value_or_null )]
-  [@@mode u = (aliased, unique)]
+  [@@mode u = (aliased, unique), l = (global, local), p = (nonportable, portable)]
   ;;
 end

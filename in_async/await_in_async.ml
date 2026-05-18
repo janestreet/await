@@ -80,13 +80,16 @@ let schedule_with_sync ?monitor ?priority f =
         match f w with
         | value -> Ivar.fill_exn ivar value
         | exception exn -> Monitor.send_exn (Monitor.current ()) exn)
-      [@nontail]))
+      [@nontail])
+    [@nontail])
+  [@nontail]
 ;;
 
 let schedule_with_await ?monitor ?priority terminator ~f =
   let terminator = Terminator.Expert.globalize terminator in
   schedule_with_sync ?monitor ?priority (fun sync ->
     f ((Await.Expert.create [@alloc stack]) ~sync ~terminator) [@nontail])
+  [@nontail]
 ;;
 
 let non_eager_await_deferred t deferred =

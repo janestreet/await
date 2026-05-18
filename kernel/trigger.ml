@@ -1,8 +1,9 @@
 open! Base
 open! Portable_kernel
 
-(*=The underlying state machine of a trigger:
+(* The underlying state machine of a trigger:
 
+   {v
      [create]
         |
         v
@@ -13,6 +14,7 @@ open! Portable_kernel
                            ^
                            |
                   [create_with_action]
+   v}
 
    The [Signaled] state is terminal. *)
 type state =

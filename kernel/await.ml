@@ -1,6 +1,5 @@
 open Base
-
-exception Terminated = Terminator.Terminated
+include Await_kernel_intf
 
 type t : value mod contended portable =
   { sync : Sync.t
@@ -93,10 +92,15 @@ let check_canceled t c = Cancellation.check c ~terminator:(terminator t) [@nonta
 module For_testing = struct
   let with_never ~f = exclave_
     Sync.For_testing.with_never ~f:(fun sync -> exclave_
-      f ((create [@alloc stack]) ~sync ~terminator:Terminator.never))
+      f ((create [@alloc stack]) ~sync ~terminator:Terminator.unkillable))
   ;;
 end
 
 module Expert = struct
   let%template create = (create [@alloc a]) [@@alloc a @ l = (stack_local, heap_global)]
+
+  let%template with_sync { terminator; _ } sync =
+    (create [@alloc a]) ~terminator ~sync [@exclave_if_stack a]
+  [@@alloc a @ l = (stack_local, heap_global)]
+  ;;
 end

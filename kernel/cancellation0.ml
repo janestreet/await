@@ -1,5 +1,6 @@
-(*=The underlying state machine of a cancellation [Token]:
+(* The underlying state machine of a cancellation [Token]:
 
+   {v
       [with_*]
          |
          +------------------------+
@@ -11,6 +12,7 @@
          |
          v
       Canceled
+   v}
 
    The [Canceled] state is terminal. *)
 

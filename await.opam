@@ -21,6 +21,7 @@ depends: [
   "handled_effect"
   "portable"
   "portable_lockfree_htbl"
+  "portable_mpmc_queue"
   "ppx_debug_assert"
   "ppx_fuelproof"
   "ppx_jane"
@@ -30,7 +31,7 @@ depends: [
   "ppx_template"
   "dune"                   {>= "3.17.0"}
 ]
-available: arch != "arm32" & arch != "x86_32"
+available: arch != "x86_32"
 synopsis: "Implementations of awaiting and synchronization primitives for OxCaml"
 description: "
 [Await] provides implementations of awaiting and synchronization primitives for OxCaml.

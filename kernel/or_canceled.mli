@@ -1,5 +1,8 @@
 @@ portable
 
+(** Result of a cancellable operation that is either {{!Completed} [Completed _]} or
+    {!Canceled}. *)
+
 open Base
 
 type%template ('a : k) t =
@@ -12,10 +15,17 @@ type%template ('a : k) t =
     , value_or_null & value_or_null
     , (value_or_null & value_or_null) & value_or_null
     , word
-    , word & value_or_null
-    , value_or_null )]
-[@@deriving
-  compare ~localize, equal ~localize, globalize, sexp ~stackify, sexp_grammar, hash]
+    , word & value_or_null )]
+
+(** The type for the result of a cancellable operation. *)
+type ('a : value_or_null) t =
+  | Canceled
+  | Completed of 'a
+
+[%%rederive:
+  type nonrec ('a : value_or_null) t = 'a t
+  [@@deriving
+    compare ~localize, equal ~localize, globalize, sexp ~stackify, sexp_grammar, hash]]
 
 (** [completed_exn t] is [a] if [t] is [Completed a], otherwise it raises *)
 val%template completed_exn : ('a : k). ('a t[@kind k]) -> 'a
@@ -29,17 +39,19 @@ val%template completed_exn : ('a : k). ('a t[@kind k]) -> 'a
     , word
     , word & value_or_null )]
 
-include Monad.S [@kind value_or_null] [@mode local] with type 'a t := 'a t
-
 (** [never_completed t] can be used for an [Or_canceled.t] computation which either loops
     forever or is canceled. *)
 val never_completed : Nothing.t t @ local -> unit
 
-(**/**)
+(** {1 Monad interface} *)
+
+include Monad.S [@kind value_or_null] [@mode local] with type 'a t := 'a t
+
+(** {1 Exception based interface for experts} *)
 
 module Exn : sig
-  (** This module provides a way to implement cancellable and non-cancellable variants of
-      an operation through a single exception raising implementation.
+  (** Provides a way to implement cancellable and non-cancellable variants of an operation
+      through a single exception raising implementation.
 
       This is not meant for casual use. This is rather meant for internal implementation
       in cases where the burden of providing both cancellable and non-cancellable variants
@@ -51,7 +63,9 @@ module Exn : sig
 
   (** [catch fn] calls [Completed (fn ())] and handles the [Canceled] exception by
       returning the [Canceled] value. *)
-  val%template catch : ('a : k). (unit -> 'a @ u) @ local once -> ('a t[@kind k]) @ u
+  val%template catch
+    : ('a : k).
+    (unit# -> 'a @ l p u) @ local once -> ('a t[@kind k]) @ l p u
   [@@kind
     k
     = ( value_or_null
@@ -61,5 +75,5 @@ module Exn : sig
       , (value_or_null & value_or_null) & value_or_null
       , word
       , word & value_or_null )]
-  [@@mode u = (aliased, unique)]
+  [@@mode u = (aliased, unique), l = (global, local), p = (nonportable, portable)]
 end

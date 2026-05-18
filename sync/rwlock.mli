@@ -1,12 +1,12 @@
 @@ portable
 
-(** A poisonable and freezable multiple readers, single writer lock. *)
-
 open Await_kernel
 module Capsule := Capsule.Expert
 
-(** Reader-writer locks that can only be held for a bounded period of time *)
 module Sync : sig
+  (** A poisonable and freezable multiple readers, single writer lock that can only be
+      held for a bounded period of time. *)
+
   (** [k t] is the type of a read/write lock protecting the contents of the [k] capsule. *)
   type 'k t : value mod contended non_float portable
 
@@ -147,7 +147,7 @@ module Sync : sig
     : ('a : value_or_null) 'k.
     Sync.t @ local
     -> 'k t @ local
-    -> f:(Sync.t @ local -> 'k Capsule.Password.Shared.t @ local -> 'a @ unique)
+    -> f:(Sync.t @ local -> 'k Capsule.Password.Shared.t @ forkable local -> 'a @ unique)
        @ local once unyielding
     -> 'a @ unique
 
@@ -157,7 +157,7 @@ module Sync : sig
     : ('a : value_or_null) 'k.
     Sync.t @ local
     -> 'k t @ local
-    -> f:(Sync.t @ local -> 'k Capsule.Password.Shared.t @ local -> 'a @ unique)
+    -> f:(Sync.t @ local -> 'k Capsule.Password.Shared.t @ forkable local -> 'a @ unique)
        @ local once unyielding
     -> 'a @ unique
 
@@ -169,7 +169,7 @@ module Sync : sig
     Sync.t @ local
     -> Cancellation.t @ local
     -> 'k t @ local
-    -> f:(Sync.t @ local -> 'k Capsule.Password.Shared.t @ local -> 'a @ unique)
+    -> f:(Sync.t @ local -> 'k Capsule.Password.Shared.t @ forkable local -> 'a @ unique)
        @ local once unyielding
     -> 'a Or_canceled.t @ unique
 
@@ -181,7 +181,7 @@ module Sync : sig
     Sync.t @ local
     -> Cancellation.t @ local
     -> 'k t @ local
-    -> f:(Sync.t @ local -> 'k Capsule.Password.Shared.t @ local -> 'a @ unique)
+    -> f:(Sync.t @ local -> 'k Capsule.Password.Shared.t @ forkable local -> 'a @ unique)
        @ local once unyielding
     -> 'a Or_canceled.t @ unique
 
@@ -239,77 +239,16 @@ module Sync : sig
   [%%template:
   [@@@alloc.default a @ l = (heap_global, stack_local)]
 
-  (** {3 Aliased for readers} *)
-
-  (** [with_key_shared w t ~f] locks [t] for reading and runs [f], providing it an aliased
-      key for ['k]. If [t] is locked for writing, then [with_key_shared] uses [w] to wait
-      until it is only locked for reading. The [Sync.t] is passed to [f] to allow further
-      use of synchronization primitives.
-
-      @raise Poisoned if [t] cannot be acquired because it is poisoned. *)
-  val with_key_shared
-    : ('a : value_or_null) 'k.
-    Sync.t @ local
-    -> 'k t @ local
-    -> f:(Sync.t @ local -> 'k Capsule.Key.t -> 'a @ l once unique)
-       @ local once unyielding
-    -> 'a @ l once unique
-
-  (** [with_key_shared_freezing w t ~f] is [with_key_shared w t ~f], but freezes [t] if
-      [f] raises an uncaught exception. *)
-  val with_key_shared_freezing
-    : ('a : value_or_null) 'k.
-    Sync.t @ local
-    -> 'k t @ local
-    -> f:(Sync.t @ local -> 'k Capsule.Key.t -> 'a @ l once unique)
-       @ local once unyielding
-    -> 'a @ l once unique
-
-  (** [with_key_shared_or_cancel w c t ~f] is [Completed (with_key_shared w t ~f)] if [c]
-      is not canceled, otherwise it is [Canceled] *)
-  val with_key_shared_or_cancel
-    : ('a : value_or_null) 'k.
-    Sync.t @ local
-    -> Cancellation.t @ local
-    -> 'k t @ local
-    -> f:(Sync.t @ local -> 'k Capsule.Key.t -> 'a @ l once unique)
-       @ local once unyielding
-    -> 'a Or_canceled.t @ l once unique
-
-  (** [with_key_shared_or_cancel_freezing w c t ~f] is
-      [with_key_shared_or_cancel w c t ~f], but freezes [t] if [f] raises an uncaught
-      exception. *)
-  val with_key_shared_or_cancel_freezing
-    : ('a : value_or_null) 'k.
-    Sync.t @ local
-    -> Cancellation.t @ local
-    -> 'k t @ local
-    -> f:(Sync.t @ local -> 'k Capsule.Key.t -> 'a @ l once unique)
-       @ local once unyielding
-    -> 'a Or_canceled.t @ l once unique
-
-  (** {3 Unique for a writer} *)
-
-  (** [with_key w t ~f] locks [t] for writing and runs [f], providing it a key for ['k]
-      uniquely. If [t] is locked for reading or writing, then [with_key] uses [w] to wait
-      until it is unlocked. The [Sync.t] is passed to [f] to allow further use of
+  (** [with_key_poisoning s t ~f] locks [t] for writing and runs [f], providing it a key
+      for ['k] uniquely. If [t] is locked for reading or writing, then [with_key] uses [s]
+      to wait until it is unlocked. The [Sync.t] is passed to [f] to allow further use of
       synchronization primitives.
+
+      There is no non-poisoning version of this function, because you must return the key
+      back (to avoid leaking it via an exception).
 
       @raise Poisoned if [t] cannot be acquired because it is poisoned.
       @raise Frozen if [t] cannot be acquired for writing because it is frozen. *)
-  val with_key
-    : ('a : value_or_null) 'k.
-    Sync.t @ local
-    -> 'k t @ local
-    -> f:
-         (Sync.t @ local
-          -> 'k Capsule.Key.t @ unique
-          -> #('a * 'k Capsule.Key.t) @ l once unique)
-       @ local once unyielding
-    -> 'a @ l once unique
-
-  (** [with_key_poisoning w t ~f] is [with_key w t ~f], but poisons [t] if [f] raises an
-      uncaught exception. *)
   val with_key_poisoning
     : ('a : value_or_null) 'k.
     Sync.t @ local
@@ -321,20 +260,6 @@ module Sync : sig
        @ local once unyielding
     -> 'a @ l once unique
 
-  (** [with_key_or_cancel w c t ~f] is [Completed (with_key w t ~f)] if [c] is not
-      canceled, otherwise it is [Canceled] *)
-  val with_key_or_cancel
-    : ('a : value_or_null) 'k.
-    Sync.t @ local
-    -> Cancellation.t @ local
-    -> 'k t @ local
-    -> f:
-         (Sync.t @ local
-          -> 'k Capsule.Key.t @ unique
-          -> #('a * 'k Capsule.Key.t) @ l once unique)
-       @ local once unyielding
-    -> 'a Or_canceled.t @ l once unique
-
   (** [with_key_or_cancel_poisoning w c t ~f] is [with_key_or_cancel w c t ~f], but
       poisons [t] if [f] raises an uncaught exception. *)
   val with_key_or_cancel_poisoning
@@ -344,6 +269,55 @@ module Sync : sig
     -> 'k t @ local
     -> f:
          (Sync.t @ local
+          -> 'k Capsule.Key.t @ unique
+          -> #('a * 'k Capsule.Key.t) @ l once unique)
+       @ local once unyielding
+    -> 'a Or_canceled.t @ l once unique]
+
+  (** {4 And waiting for a [Condition]} *)
+
+  module Condition : Condition_intf.S with type 'k lock := 'k t (** @open *)
+
+  [%%template:
+  [@@@alloc.default a @ l = (heap_global, stack_local)]
+
+  (** [with_key_and_condition_wait_poisoning w t ~f] locks [t] and runs [f], providing it
+      with a key for ['k] uniquely and a ['k Condition.Wait.t] which provides the ability
+      to temporarily unlock [t] and wait on an associated ['k Condition.t]. Since waiting
+      on a condition variable can delay for an unbounded period of time, this requires an
+      [Await.t], even for a [Sync] mutex, but only passes a [Sync.t] to the callback. To
+      recover the original [Await.t] during the execution of [f], you can use
+      {!Condition.Wait.release_temporarily}.
+
+      The lock is only poisoned if [f] raises {i while the lock held}; if waiting on a
+      condition variable is terminated or if the callback passed to
+      {!Condition.Wait.release_temporarily} raises, the lock will not be poisoned.
+
+      @raise Poisoned if [t] cannot be acquired because it is poisoned.
+      @raise Terminated if [w] is terminated before the mutex is acquired. *)
+  val with_key_and_condition_wait_poisoning
+    : ('a : value_or_null) 'k.
+    Await.t @ local
+    -> 'k t @ local
+    -> f:
+         (Sync.t @ local
+          -> 'k Condition.Wait.t @ local
+          -> 'k Capsule.Key.t @ unique
+          -> #('a * 'k Capsule.Key.t) @ l once unique)
+       @ local once unyielding
+    -> 'a @ l once unique
+
+  (** [with_key_and_condition_wait_or_cancel_poisoining w c t ~f] is
+      [Completed (with_key_and_condition_wait_poisoining w t ~f)] if [c] is not canceled,
+      otherwise it is [Canceled]. *)
+  val with_key_and_condition_wait_or_cancel_poisoning
+    : ('a : value_or_null) 'k.
+    Await.t @ local
+    -> Cancellation.t @ local
+    -> 'k t @ local
+    -> f:
+         (Sync.t @ local
+          -> 'k Condition.Wait.t @ local
           -> 'k Capsule.Key.t @ unique
           -> #('a * 'k Capsule.Key.t) @ l once unique)
        @ local once unyielding
@@ -380,8 +354,10 @@ module Sync : sig
   end
 end
 
-(** Reader-writer locks that can be acquired for an unbounded period of time *)
 module Await : sig
+  (** A poisonable and freezable multiple readers, single writer lock that can be acquired
+      for an unbounded period of time. *)
+
   (** [k t] is the type of a read/write lock protecting the contents of the [k] capsule. *)
   type 'k t : value mod contended non_float portable
 
@@ -510,7 +486,7 @@ module Await : sig
     : ('a : value_or_null) 'k.
     Await.t @ local
     -> 'k t @ local
-    -> f:('k Capsule.Password.Shared.t @ local -> 'a @ unique) @ local once
+    -> f:('k Capsule.Password.Shared.t @ forkable local -> 'a @ unique) @ local once
     -> 'a @ unique
 
   (** [with_password_shared_freezing w t ~f] is [with_password_shared w t ~f], but freezes
@@ -519,7 +495,7 @@ module Await : sig
     : ('a : value_or_null) 'k.
     Await.t @ local
     -> 'k t @ local
-    -> f:('k Capsule.Password.Shared.t @ local -> 'a @ unique) @ local once
+    -> f:('k Capsule.Password.Shared.t @ forkable local -> 'a @ unique) @ local once
     -> 'a @ unique
 
   (** [with_password_shared_or_cancel w c t ~f] is
@@ -530,7 +506,7 @@ module Await : sig
     Await.t @ local
     -> Cancellation.t @ local
     -> 'k t @ local
-    -> f:('k Capsule.Password.Shared.t @ local -> 'a @ unique) @ local once
+    -> f:('k Capsule.Password.Shared.t @ forkable local -> 'a @ unique) @ local once
     -> 'a Or_canceled.t @ unique
 
   (** [with_password_shared_or_cancel_freezing w c t ~f] is
@@ -541,7 +517,7 @@ module Await : sig
     Await.t @ local
     -> Cancellation.t @ local
     -> 'k t @ local
-    -> f:('k Capsule.Password.Shared.t @ local -> 'a @ unique) @ local once
+    -> f:('k Capsule.Password.Shared.t @ forkable local -> 'a @ unique) @ local once
     -> 'a Or_canceled.t @ unique
 
   (** {3 [Password] for a writer} *)
@@ -594,68 +570,6 @@ module Await : sig
   [%%template:
   [@@@alloc.default a @ l = (heap_global, stack_local)]
 
-  (** {3 Aliased for readers} *)
-
-  (** [with_key_shared w t ~f] locks [t] for reading and runs [f], providing it an aliased
-      key for ['k]. If [t] is locked for writing, then [with_key_shared] uses [w] to wait
-      until it is only locked for reading.
-
-      @raise Poisoned if [t] cannot be acquired because it is poisoned.
-      @raise Terminated if [w] is terminated before the lock is acquired. *)
-  val with_key_shared
-    : ('a : value_or_null) 'k.
-    Await.t @ local
-    -> 'k t @ local
-    -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
-    -> 'a @ l once unique
-
-  (** [with_key_shared_freezing w t ~f] is [with_key_shared w t ~f], but freezes [t] if
-      [f] raises an uncaught exception. *)
-  val with_key_shared_freezing
-    : ('a : value_or_null) 'k.
-    Await.t @ local
-    -> 'k t @ local
-    -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
-    -> 'a @ l once unique
-
-  (** [with_key_shared_or_cancel w c t ~f] is [Completed (with_key_shared w t ~f)] if [c]
-      is not canceled, otherwise it is [Canceled] *)
-  val with_key_shared_or_cancel
-    : ('a : value_or_null) 'k.
-    Await.t @ local
-    -> Cancellation.t @ local
-    -> 'k t @ local
-    -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
-    -> 'a Or_canceled.t @ l once unique
-
-  (** [with_key_shared_or_cancel_freezing w c t ~f] is
-      [with_key_shared_or_cancel w c t ~f], but freezes [t] if [f] raises an uncaught
-      exception. *)
-  val with_key_shared_or_cancel_freezing
-    : ('a : value_or_null) 'k.
-    Await.t @ local
-    -> Cancellation.t @ local
-    -> 'k t @ local
-    -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
-    -> 'a Or_canceled.t @ l once unique
-
-  (** {3 Unique for a writer} *)
-
-  (** [with_key w t ~f] locks [t] for writing and runs [f], providing it a key for ['k]
-      uniquely. If [t] is locked for reading or writing, then [with_key] uses [w] to wait
-      until it is unlocked.
-
-      @raise Poisoned if [t] cannot be acquired because it is poisoned.
-      @raise Frozen if [t] cannot be acquired for writing because it is frozen.
-      @raise Terminated if [w] is terminated before the lock is acquired. *)
-  val with_key
-    : ('a : value_or_null) 'k.
-    Await.t @ local
-    -> 'k t @ local
-    -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
-       @ local once
-    -> 'a @ l once unique
-
   (** [with_key_poisoning w t ~f] is [with_key w t ~f], but poisons [t] if [f] raises an
       uncaught exception. *)
   val with_key_poisoning
@@ -665,17 +579,6 @@ module Await : sig
     -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
        @ local once
     -> 'a @ l once unique
-
-  (** [with_key_or_cancel w c t ~f] is [Completed (with_key w t ~f)] if [c] is not
-      canceled, otherwise it is [Canceled] *)
-  val with_key_or_cancel
-    : ('a : value_or_null) 'k.
-    Await.t @ local
-    -> Cancellation.t @ local
-    -> 'k t @ local
-    -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
-       @ local once
-    -> 'a Or_canceled.t @ l once unique
 
   (** [with_key_or_cancel_poisoning w c t ~f] is [with_key_or_cancel w c t ~f], but
       poisons [t] if [f] raises an uncaught exception. *)
@@ -690,7 +593,46 @@ module Await : sig
 
   (** {4 And waiting for a [Condition]} *)
 
-  module Condition : Condition_intf.Condition with type 'k lock := 'k t (** @open *)
+  module Condition : Condition_intf.S with type 'k lock := 'k t (** @open *)
+
+  [%%template:
+  [@@@alloc.default a @ l = (heap_global, stack_local)]
+
+  (** [with_key_and_condition_wait_poisoning w t ~f] locks [t] and runs [f], providing it
+      with a key for ['k] uniquely and a ['k Condition.Wait.t] which provides the ability
+      to temporarily unlock [t] and wait on an associated ['k Condition.t].
+
+      The lock is only poisoned if [f] raises {i while the lock held}; if waiting on a
+      condition variable is terminated or if the callback passed to
+      {!Condition.Wait.release_temporarily} raises, the lock will not be poisoned.
+
+      @raise Poisoned if [t] cannot be acquired because it is poisoned.
+      @raise Terminated if [w] is terminated before the mutex is acquired. *)
+  val with_key_and_condition_wait_poisoning
+    : ('a : value_or_null) 'k.
+    Await.t @ local
+    -> 'k t @ local
+    -> f:
+         ('k Condition.Wait.t @ local
+          -> 'k Capsule.Key.t @ unique
+          -> #('a * 'k Capsule.Key.t) @ l once unique)
+       @ local once
+    -> 'a @ l once unique
+
+  (** [with_key_and_condition_wait_or_cancel_poisoining w c t ~f] is
+      [Completed (with_key_and_condition_wait_poisoining w t ~f)] if [c] is not canceled,
+      otherwise it is [Canceled]. *)
+  val with_key_and_condition_wait_or_cancel_poisoning
+    : ('a : value_or_null) 'k.
+    Await.t @ local
+    -> Cancellation.t @ local
+    -> 'k t @ local
+    -> f:
+         ('k Condition.Wait.t @ local
+          -> 'k Capsule.Key.t @ unique
+          -> #('a * 'k Capsule.Key.t) @ l once unique)
+       @ local once
+    -> 'a Or_canceled.t @ l once unique]
 
   (** {4 And poisoning indefinitely} *)
 
@@ -724,7 +666,7 @@ module Await : sig
     val with_password
       : ('a : value_or_null) 'k.
       'k t @ unique
-      -> f:('k Capsule.Password.Shared.t @ local -> 'a @ unique) @ local once
+      -> f:('k Capsule.Password.Shared.t @ forkable local -> 'a @ unique) @ local once
       -> 'a * 'k t @ unique
 
     (** [access g ~f] runs [f], providing it shared access to the capsule ['k], and

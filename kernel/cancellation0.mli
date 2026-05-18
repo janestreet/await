@@ -20,12 +20,18 @@ end
 
 val is_cancellable : t @ local -> bool
 val source : t @ local -> Source.t or_null
-val with_ : ('a : value_or_null). (t @ local -> 'a) @ local once -> 'a
-val with_linked : ('a : value_or_null). t @ local -> (t @ local -> 'a) @ local once -> 'a
+
+val with_
+  : ('a : value_or_null).
+  (t @ local -> 'a @ once unique) @ local once -> 'a @ once unique
+
+val with_linked
+  : ('a : value_or_null).
+  t @ local -> (t @ local -> 'a @ once unique) @ local once -> 'a @ once unique
 
 val with_linked_multi
   : ('a : value_or_null).
-  t list @ local -> (t @ local -> 'a) @ local once -> 'a
+  t list @ local -> (t @ local -> 'a @ once unique) @ local once -> 'a @ once unique
 
 module Link : sig
   type t =

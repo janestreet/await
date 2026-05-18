@@ -2,6 +2,8 @@ open! Base
 open Await_kernel
 
 module type S = sig @@ portable
+  (** A deferred computation. *)
+
   open! Base
   open Await_kernel
 
@@ -28,7 +30,7 @@ module type S = sig @@ portable
   val from_val : ('a : value_or_null). ?padded:bool -> 'a @ contended portable -> 'a t
 
   (** [from_fun f] returns a suspension of the function [f]. Note that [f] must be
-      [portable], as it may be run by any domain.
+      [portable], as it may be run on any thread.
 
       The optional [padded] argument specifies whether to pad the data structure to avoid
       false sharing. See {!Atomic.make} for a longer explanation. *)

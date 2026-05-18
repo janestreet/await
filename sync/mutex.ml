@@ -4,7 +4,7 @@ open! Import
 (** See [Adaptive_backoff.once] *)
 let log_scale = 5
 
-module Prim = struct
+module Prim : Mutex_common.Prim = struct
   module State : sig @@ portable
     (** Implements primitive mutex state manipulation logic.
 
@@ -72,6 +72,7 @@ module Prim = struct
 
     (* *)
 
+    val equal : t -> t -> bool
     val is_locked : t -> bool
     val is_locked_permanently : t -> bool
     val is_locked_at_most_once : t -> bool
@@ -88,8 +89,10 @@ module Prim = struct
 
     (* The state looks like this:
 
-       Bit: [      0            |  1  to  n-4  | n-3 |        n-2         | n-1 ] Use:
-       [ no_need_to_signal | locked count |     | locked permanently |  0  ]
+       {v
+         Bit: [      0            |  1  to  n-4  | n-3 |        n-2         | n-1 ]
+         Use: [ no_need_to_signal | locked count |     | locked permanently |  0  ]
+       v}
 
        Above, [n] is the number of bits in an [int] and bit at [n-1] is the sign bit,
        which should normally always be [0].
@@ -121,6 +124,7 @@ module Prim = struct
 
     (* *)
 
+    let equal = Int.equal
     let[@inline] is_locked state = locked <= state
     let[@inline] is_locked_at_most_once state = state < locked * 2
 
@@ -236,17 +240,38 @@ module Prim = struct
   let acquire_or_cancel w c t = acquire_as w c t Or_canceled
   let acquire w t = acquire_as w Cancellation.never t Value
 
-  let[@inline never] release t =
-    let[@inline] signal_awaiter t =
-      match
-        Awaitable.compare_and_set
-          t
-          ~if_phys_equal_to:State.unlocked_and_need_to_signal
-          ~replace_with:State.unlocked_and_no_need_to_signal
-      with
-      | Set_here -> Awaitable.signal t
-      | Compare_failed -> ()
+  let try_acquire t =
+    let[@inline never] failed t state =
+      if State.is_locked_permanently state then raise Poisoned;
+      (* Backoff in case [try_acquire] is called in a loop. *)
+      Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
+      false
     in
+    let state = Awaitable.get t in
+    if State.is_locked state
+    then failed t state
+    else (
+      let prior =
+        Awaitable.compare_exchange
+          t
+          ~if_phys_equal_to:state
+          ~replace_with:(State.and_incr_locked state)
+      in
+      if State.equal state prior then true else failed t prior)
+  ;;
+
+  let[@inline] signal_awaiter t =
+    match
+      Awaitable.compare_and_set
+        t
+        ~if_phys_equal_to:State.unlocked_and_need_to_signal
+        ~replace_with:State.unlocked_and_no_need_to_signal
+    with
+    | Set_here -> Awaitable.signal t
+    | Compare_failed -> ()
+  ;;
+
+  let[@inline never] release t =
     let[@inline] undo_release t =
       (* This may seem unnecessary, however, if the mutex was poisoned during
          [Condition.wait] or [release_temporarily] then [release] may be called from an
@@ -277,396 +302,16 @@ module Prim = struct
   let[@inline] create ?padded () =
     Awaitable.make ?padded State.unlocked_and_no_need_to_signal
   ;;
-end
 
-module [@inline] Make (C : Lock_common_intf.Capability) = struct
-  type 'k t = Prim.t
-
-  let create ?padded _key = Prim.create ?padded ()
-
-  module Guard = struct
-    type 'k mutex = 'k t
-
-    type 'k inner =
-      { mutex : 'k mutex @@ many
-      ; mutable should_poison : bool [@atomic]
-      }
-
-    type 'k t = { inner : 'k inner @@ aliased contended portable } [@@unboxed]
-
-    let poison_if_locked ({ mutex; _ } as inner) =
-      if Atomic.Loc.get [%atomic.loc inner.should_poison] then Prim.poison mutex
-    ;;
-
-    let create : 'k mutex -> 'k t @ unique =
-      fun mutex ->
-      let t = { mutex; should_poison = true } in
-      Stdlib.Gc.Safe.finalise poison_if_locked t;
-      { inner = t }
-    ;;
-
-    let with_key
-      :  'k t @ unique
-      -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique)
-         @ local once
-      -> 'a * 'k t @ once unique
-      =
-      fun t ~f ->
-      match f (Capsule.Key.unsafe_mk ()) with
-      | #(res, _key) -> res, t
-      | exception exn -> Prim.poison_and_reraise exn t.inner.mutex
-    ;;
-
-    let with_password
-      :  'k t @ unique -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
-      -> 'a * 'k t @ unique
-      =
-      fun t ~f ->
-      let { many = a }, t =
-        with_key
-          t
-          ~f:
-            (Capsule.Key.with_password ~f:(fun password -> { many = f password })
-            [@nontail])
-      in
-      a, t
-    ;;
-
-    let access
-      :  'k t @ unique
-      -> f:('k Capsule.Access.t -> 'a @ contended once portable unique)
-         @ local once portable
-      -> 'a * 'k t @ contended once portable unique
-      =
-      fun t ~f ->
-      let { contended = { portable = a } }, t =
-        with_key t ~f:(fun key ->
-          let #(a, key) =
-            Capsule.Key.access key ~f:(fun access -> { portable = f access })
-          in
-          #({ contended = a }, key))
-      in
-      a, t
-    ;;
-
-    let release { inner = { mutex; _ } as inner } =
-      Atomic.Loc.set [%atomic.loc inner.should_poison] false;
-      (* Make sure the stack root for [inner] stays alive at least this long, to make sure
-         that if its finalizer runs, it sees [should_poison] set to [false]. *)
-      let _ : _ = (Sys.opaque_identity [@mode contended]) inner in
-      Prim.release mutex
-    ;;
-
-    let poison : 'k t @ unique -> 'k Capsule.Key.t @ unique =
-      fun { inner = { mutex; _ } as inner } ->
-      (* Not technically releasing, but setting this value to [false] prevents calling
-         [poison] again in the finalizer, which is moderately more efficient. *)
-      Atomic.Loc.set [%atomic.loc inner.should_poison] false;
-      Prim.poison mutex;
-      Capsule.Key.unsafe_mk ()
-    ;;
-
-    let is_poisoning { inner } = Atomic.Loc.get [%atomic.loc inner.should_poison]
-  end
-
-  let acquire w t =
-    Prim.acquire w t;
-    Guard.create t
-  ;;
-
-  let acquire_or_cancel
-    : C.t @ local -> Cancellation.t @ local -> 'k t -> 'k Guard.t Or_canceled.t @ unique
-    =
-    fun w c t ->
-    match Prim.acquire_or_cancel (C.unsafe_to_await w) c t with
-    | Canceled -> Canceled
-    | Completed () -> Completed (Guard.create t)
-  ;;
-
-  [%%template
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
-
-  let[@inline] with_key
-    : type (a : value_or_null) k.
-      C.t @ local
-      -> k t @ local
-      -> f:(k Capsule.Key.t @ unique -> #(a * k Capsule.Key.t) @ l once unique)
-         @ local once
-      -> a @ l once unique
-    =
-    fun w t ~f ->
-    (Prim.acquire (C.unsafe_to_await w) t;
-     match f (Capsule.Key.unsafe_mk ()) with
-     | #(res, _key) ->
-       Prim.release t;
-       res
-     | exception exn -> Prim.release_and_reraise exn t)
-    [@exclave_if_stack a]
-  ;;
-
-  let[@inline] with_key_or_cancel
-    :  C.t @ local -> Cancellation.t @ local -> 'k t @ local
-    -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
-       @ local once
-    -> 'a Or_canceled.t @ l once unique
-    =
-    fun w c t ~f ->
-    match[@exclave_if_stack a] Prim.acquire_or_cancel (C.unsafe_to_await w) c t with
-    | Canceled -> Canceled
-    | Completed () ->
-      (match f (Capsule.Key.unsafe_mk ()) with
-       | #(res, _key) ->
-         Prim.release t;
-         Completed res
-       | exception exn -> Prim.release_and_reraise exn t)
-  ;;
-
-  let[@inline] with_key_poisoning
-    :  C.t @ local -> 'k t @ local
-    -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
-       @ local once
-    -> 'a @ l once unique
-    =
-    fun w t ~f ->
-    (Prim.acquire (C.unsafe_to_await w) t;
-     match f (Capsule.Key.unsafe_mk ()) with
-     | #(res, _key) ->
-       Prim.release t;
-       res
-     | exception exn -> Prim.poison_and_reraise exn t)
-    [@exclave_if_stack a]
-  ;;
-
-  let[@inline] with_key_or_cancel_poisoning
-    :  C.t @ local -> Cancellation.t @ local -> 'k t @ local
-    -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
-       @ local once
-    -> 'a Or_canceled.t @ l once unique
-    =
-    fun w c t ~f ->
-    match[@exclave_if_stack a] Prim.acquire_or_cancel (C.unsafe_to_await w) c t with
-    | Canceled -> Canceled
-    | Completed () ->
-      (match f (Capsule.Key.unsafe_mk ()) with
-       | #(res, _key) ->
-         Prim.release t;
-         Completed res
-       | exception exn -> Prim.poison_and_reraise exn t)
-  ;;]
-
-  let with_access_poisoning w t ~f =
-    (with_key_poisoning w t ~f:(fun key ->
-       let #(a, key) =
-         Capsule.Key.access key ~f:(fun access -> { portable = f access })
-       in
-       #({ contended = a }, key)))
-      .contended
-      .portable
-  ;;
-
-  let with_access w t ~f =
-    (with_key w t ~f:(fun key ->
-       let #(a, key) =
-         Capsule.Key.access key ~f:(fun access -> { portable = f access })
-       in
-       #({ contended = a }, key)))
-      .contended
-      .portable
-  ;;
-
-  let with_access_or_cancel_poisoning w c t ~f : _ Or_canceled.t =
-    match
-      with_key_or_cancel_poisoning w c t ~f:(fun key ->
-        let #(a, key) =
-          Capsule.Key.access key ~f:(fun access -> { portable = f access })
-        in
-        #({ contended = a }, key))
-    with
-    | Canceled -> Canceled
-    | Completed { contended = { portable = a } } -> Completed a
-  ;;
-
-  let with_access_or_cancel w c t ~f : _ Or_canceled.t =
-    match
-      with_key_or_cancel w c t ~f:(fun key ->
-        let #(a, key) =
-          Capsule.Key.access key ~f:(fun access -> { portable = f access })
-        in
-        #({ contended = a }, key))
-    with
-    | Canceled -> Canceled
-    | Completed { contended = { portable = a } } -> Completed a
-  ;;
-
-  let with_password_poisoning w t ~f =
-    (with_key_poisoning w t ~f:(fun key ->
-       Capsule.Key.with_password key ~f:(fun password -> { many = f password }) [@nontail]))
-      .many
-  ;;
-
-  let with_password w t ~f =
-    (with_key w t ~f:(fun key ->
-       Capsule.Key.with_password key ~f:(fun password -> { many = f password }) [@nontail]))
-      .many
-  ;;
-
-  let with_password_or_cancel_poisoning w c t ~f : _ Or_canceled.t =
-    match
-      with_key_or_cancel_poisoning w c t ~f:(fun key ->
-        Capsule.Key.with_password key ~f:(fun password -> { many = f password })
-        [@nontail])
-    with
-    | Canceled -> Canceled
-    | Completed { many = a } -> Completed a
-  ;;
-
-  let with_password_or_cancel w c t ~f : _ Or_canceled.t =
-    match
-      with_key_or_cancel w c t ~f:(fun key ->
-        Capsule.Key.with_password key ~f:(fun password -> { many = f password })
-        [@nontail])
-    with
-    | Canceled -> Canceled
-    | Completed { many = a } -> Completed a
-  ;;
-
-  let release_temporarily
-    :  C.t @ local -> 'k t @ local -> 'k Capsule.Key.t @ unique
-    -> f:(unit -> 'a @ unique) @ local once -> #('a * 'k Capsule.Key.t) @ unique
-    =
-    fun w t k ~f ->
-    Prim.release t;
-    let res = f () in
-    Prim.acquire (C.unsafe_to_await w) t;
-    #(res, k)
-  ;;
-
-  let release_temporarily_or_cancel
-    : ('a : value_or_null).
-    C.t @ local
-    -> Cancellation.t @ local
-    -> 'k t @ local
-    -> 'k Capsule.Key.t @ unique
-    -> f:(unit -> 'a @ unique) @ local once
-    -> (#('a * 'k Capsule.Key.t) Or_canceled.t[@kind value_or_null & void]) @ unique
-    =
-    fun w c t k ~f ->
-    Prim.release t;
-    let res = f () in
-    match Prim.acquire_or_cancel (C.unsafe_to_await w) c t with
-    | Canceled -> Canceled
-    | Completed () -> Completed #(res, k)
-  ;;
-
-  let acquire_and_poison : C.t @ local -> 'k t @ local -> 'k Capsule.Key.t @ unique =
-    fun w t ->
-    Prim.acquire (C.unsafe_to_await w) t;
-    Prim.poison t;
-    Capsule.Key.unsafe_mk ()
-  ;;
-
-  let acquire_and_poison_or_cancel
-    :  C.t @ local -> Cancellation.t @ local -> 'k t @ local
-    -> ('k Capsule.Key.t Or_canceled.t[@kind void]) @ unique
-    =
-    fun w c t ->
-    match Prim.acquire_or_cancel (C.unsafe_to_await w) c t with
-    | Canceled -> Canceled
-    | Completed () ->
-      Prim.poison t;
-      Completed (Capsule.Key.unsafe_mk ())
-  ;;
-
-  let poison_unacquired : 'k t @ local -> unit = fun t -> Prim.poison t
-  let is_poisoned t = Prim.State.is_locked_permanently (Awaitable.get t)
-
-  let poison t key =
-    Prim.poison t;
-    key
-  ;;
-
-  module Condition = struct
-    include Condition_common
-
-    let wait w t ~lock key =
-      wait ~acquire:Prim.acquire ~release:Prim.release w t ~lock key
-    ;;
-  end
+  let is_poisoned t = State.is_locked_permanently (Awaitable.get t)
+  let is_locked t = State.is_locked (Awaitable.get t)
 
   module For_testing = struct
-    let is_exclusive t = Prim.State.is_locked (Awaitable.get t)
+    let is_exclusive = is_locked
 
     include Awaitable.For_testing
   end
 end
 
-module Sync = struct
-  include Make (Lock_common.Sync)
-
-  (* The following definitions shadow the ones defined by Make, but also pass the Sync.t
-     to the callback. We can do this here because the actual implementation doesn't
-     require an unyielding callback, but the signature exposes these functions as
-     requiring unyielding callbacks, which is an important safety property. *)
-
-  let[@inline] with_access s t ~f =
-    with_access s t ~f:(fun access -> f s access [@nontail]) [@nontail]
-  ;;
-
-  let[@inline] with_access_poisoning s t ~f =
-    with_access_poisoning s t ~f:(fun access -> f s access [@nontail]) [@nontail]
-  ;;
-
-  let[@inline] with_access_or_cancel s c t ~f =
-    with_access_or_cancel s c t ~f:(fun access -> f s access [@nontail]) [@nontail]
-  ;;
-
-  let[@inline] with_access_or_cancel_poisoning s c t ~f =
-    with_access_or_cancel_poisoning s c t ~f:(fun access -> f s access [@nontail])
-    [@nontail]
-  ;;
-
-  let[@inline] with_password s t ~f =
-    with_password s t ~f:(fun password -> f s password [@nontail]) [@nontail]
-  ;;
-
-  let[@inline] with_password_poisoning s t ~f =
-    with_password_poisoning s t ~f:(fun password -> f s password [@nontail]) [@nontail]
-  ;;
-
-  let[@inline] with_password_or_cancel s c t ~f =
-    with_password_or_cancel s c t ~f:(fun password -> f s password [@nontail]) [@nontail]
-  ;;
-
-  let[@inline] with_password_or_cancel_poisoning s c t ~f =
-    with_password_or_cancel_poisoning s c t ~f:(fun password -> f s password [@nontail])
-    [@nontail]
-  ;;
-
-  [%%template
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
-
-  let[@inline] with_key s t ~f =
-    (with_key [@alloc a]) s t ~f:(fun key -> f s key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
-  ;;
-
-  let[@inline] with_key_poisoning s t ~f =
-    (with_key_poisoning [@alloc a]) s t ~f:(fun key ->
-      f s key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
-  ;;
-
-  let[@inline] with_key_or_cancel s c t ~f =
-    (with_key_or_cancel [@alloc a]) s c t ~f:(fun key ->
-      f s key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
-  ;;
-
-  let[@inline] with_key_or_cancel_poisoning s c t ~f =
-    (with_key_or_cancel_poisoning [@alloc a]) s c t ~f:(fun key ->
-      f s key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
-  ;;]
-end
-
-module Await = Make (Lock_common.Await)
+module Sync = Mutex_common.Make_sync (Prim)
+module Await = Mutex_common.Make_await (Prim)

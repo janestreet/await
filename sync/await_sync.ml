@@ -18,6 +18,7 @@ module Await = struct
   module Ivar = Ivar
   module Lazy = Lazy.Await
   module Mutex = Mutex.Await
+  module Mpmc_queue = Mpmc_queue
   module Mvar = Mvar
   module Rwlock = Rwlock.Await
   module Scope = Scope

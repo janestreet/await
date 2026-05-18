@@ -82,11 +82,11 @@ module Prim = struct
   end = struct
     (* The state looks like this:
 
-       Bit:
-       [      0     |      1     | 2 to n-7 | n-6 |   n-5  |   n-4     | n-3 |   n-2     | n-1 ]
-       Use:
-       [ no_writers ! no_readers |  shared  |     ! shared | exclusive |     ! exclusive |  0  ]
-       [       no_awaiters       |  count   |        perm. |           |         perm.   |     ]
+       {v
+         Bit: [      0     |      1     | 2 to n-7 | n-6 |   n-5  |   n-4     | n-3 |   n-2     | n-1 ]
+         Use: [ no_writers ! no_readers |  shared  |     ! shared | exclusive |     ! exclusive |  0  ]
+              [       no_awaiters       |  count   |        perm. |           |         perm.   |     ]
+       v}
 
        Above, [n] is the number of bits in an [int] and bit at [n-1] is the sign bit,
        which should normally always be [0].
@@ -430,7 +430,7 @@ module Prim = struct
   let[@inline] create ?padded () = Awaitable.make ?padded State.no_awaiters
 end
 
-module [@inline] Make (C : Lock_common.Capability) = struct
+module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
   type 'k t = Prim.t
 
   let create ?padded _key = Prim.create ?padded ()
@@ -595,26 +595,123 @@ module [@inline] Make (C : Lock_common.Capability) = struct
     ;;
   end
 
+  module Unsafe = struct
+    (* SAFETY:
+
+       Since these functions unlock the mutex on uncaught exceptions rather than
+       poisoning, they are unsound: it's possible to stash the provided key in a raised
+       exception, which leaks the key. We define them internally to implement functions
+       like [with_access] and [with_password], but intentionally don't expose them in the
+       interface.
+    *)
+
+    let[@inline] with_key
+      : ('a : value_or_null) 'k.
+      C.t @ local
+      -> 'k t @ local
+      -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique)
+         @ local once
+      -> 'a @ once unique
+      =
+      fun w t ~f ->
+      Prim.acquire (C.unsafe_to_await w) t;
+      match f (Capsule.Key.unsafe_mk ()) with
+      | #(res, _key) ->
+        Prim.release t;
+        res
+      | exception exn -> Prim.release_and_reraise exn t
+    ;;
+
+    let[@inline] with_key_or_cancel
+      : ('a : value_or_null) 'k.
+      C.t @ local
+      -> Cancellation.t @ local
+      -> 'k t @ local
+      -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique)
+         @ local once
+      -> 'a Or_canceled.t @ once unique
+      =
+      fun w c t ~f ->
+      match Prim.acquire_or_cancel (C.unsafe_to_await w) c t with
+      | Canceled -> Canceled
+      | Completed () ->
+        (match f (Capsule.Key.unsafe_mk ()) with
+         | #(res, _key) ->
+           Prim.release t;
+           Completed res
+         | exception exn -> Prim.release_and_reraise exn t)
+    ;;
+
+    let[@inline] with_key_shared
+      : ('a : value_or_null) 'k.
+      C.t @ local
+      -> 'k t @ local
+      -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
+      -> 'a @ once unique
+      =
+      fun w t ~f ->
+      Prim.acquire_shared (C.unsafe_to_await w) t;
+      match f (Capsule.Key.unsafe_mk ()) with
+      | res ->
+        Prim.release_shared t;
+        res
+      | exception exn -> Prim.release_shared_and_reraise exn t
+    ;;
+
+    let[@inline] with_key_shared_freezing
+      : ('a : value_or_null) 'k.
+      C.t @ local
+      -> 'k t @ local
+      -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
+      -> 'a @ once unique
+      =
+      fun w t ~f ->
+      Prim.acquire_shared (C.unsafe_to_await w) t;
+      match f (Capsule.Key.unsafe_mk ()) with
+      | res ->
+        Prim.release_shared t;
+        res
+      | exception exn -> Prim.freeze_release_shared_and_reraise exn t
+    ;;
+
+    let[@inline] with_key_shared_or_cancel
+      : ('a : value_or_null) 'k.
+      C.t @ local
+      -> Cancellation.t @ local
+      -> 'k t @ local
+      -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
+      -> 'a Or_canceled.t @ once unique
+      =
+      fun w c t ~f ->
+      match Prim.acquire_shared_or_cancel (C.unsafe_to_await w) c t with
+      | Canceled -> Canceled
+      | Completed () ->
+        (match f (Capsule.Key.unsafe_mk ()) with
+         | res ->
+           Prim.release_shared t;
+           Completed res
+         | exception exn -> Prim.release_shared_and_reraise exn t)
+    ;;
+
+    let[@inline] with_key_shared_or_cancel_freezing
+      :  C.t @ local -> Cancellation.t @ local -> 'k t @ local
+      -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
+      -> 'a Or_canceled.t @ once unique
+      =
+      fun w c t ~f ->
+      match Prim.acquire_shared_or_cancel (C.unsafe_to_await w) c t with
+      | Canceled -> Canceled
+      | Completed () ->
+        (match f (Capsule.Key.unsafe_mk ()) with
+         | res ->
+           Prim.release_shared t;
+           Completed res
+         | exception exn -> Prim.freeze_release_shared_and_reraise exn t)
+    ;;
+  end
+
   [%%template
   [@@@alloc.default a @ l = (heap_global, stack_local)]
-
-  let[@inline] with_key
-    : ('a : value_or_null) 'k.
-    C.t @ local
-    -> 'k t @ local
-    -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
-       @ local once
-    -> 'a @ l once unique
-    =
-    fun w t ~f ->
-    (Prim.acquire (C.unsafe_to_await w) t;
-     match f (Capsule.Key.unsafe_mk ()) with
-     | #(res, _key) ->
-       Prim.release t;
-       res
-     | exception exn -> Prim.release_and_reraise exn t)
-    [@exclave_if_stack a]
-  ;;
 
   let[@inline] with_key_poisoning
     : ('a : value_or_null) 'k.
@@ -632,26 +729,6 @@ module [@inline] Make (C : Lock_common.Capability) = struct
        res
      | exception exn -> Prim.poison_and_reraise exn t)
     [@exclave_if_stack a]
-  ;;
-
-  let[@inline] with_key_or_cancel
-    : ('a : value_or_null) 'k.
-    C.t @ local
-    -> Cancellation.t @ local
-    -> 'k t @ local
-    -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
-       @ local once
-    -> 'a Or_canceled.t @ l once unique
-    =
-    fun w c t ~f ->
-    match[@exclave_if_stack a] Prim.acquire_or_cancel (C.unsafe_to_await w) c t with
-    | Canceled -> Canceled
-    | Completed () ->
-      (match f (Capsule.Key.unsafe_mk ()) with
-       | #(res, _key) ->
-         Prim.release t;
-         Completed res
-       | exception exn -> Prim.release_and_reraise exn t)
   ;;
 
   let[@inline] with_key_or_cancel_poisoning
@@ -672,79 +749,6 @@ module [@inline] Make (C : Lock_common.Capability) = struct
          Prim.release t;
          Completed res
        | exception exn -> Prim.poison_and_reraise exn t)
-  ;;
-
-  let[@inline] with_key_shared
-    : ('a : value_or_null) 'k.
-    C.t @ local
-    -> 'k t @ local
-    -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
-    -> 'a @ l once unique
-    =
-    fun w t ~f ->
-    (Prim.acquire_shared (C.unsafe_to_await w) t;
-     match f (Capsule.Key.unsafe_mk ()) with
-     | res ->
-       Prim.release_shared t;
-       res
-     | exception exn -> Prim.release_shared_and_reraise exn t)
-    [@exclave_if_stack a]
-  ;;
-
-  let[@inline] with_key_shared_freezing
-    : ('a : value_or_null) 'k.
-    C.t @ local
-    -> 'k t @ local
-    -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
-    -> 'a @ l once unique
-    =
-    fun w t ~f ->
-    (Prim.acquire_shared (C.unsafe_to_await w) t;
-     match f (Capsule.Key.unsafe_mk ()) with
-     | res ->
-       Prim.release_shared t;
-       res
-     | exception exn -> Prim.freeze_release_shared_and_reraise exn t)
-    [@exclave_if_stack a]
-  ;;
-
-  let[@inline] with_key_shared_or_cancel
-    : ('a : value_or_null) 'k.
-    C.t @ local
-    -> Cancellation.t @ local
-    -> 'k t @ local
-    -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
-    -> 'a Or_canceled.t @ l once unique
-    =
-    fun w c t ~f ->
-    match[@exclave_if_stack a]
-      Prim.acquire_shared_or_cancel (C.unsafe_to_await w) c t
-    with
-    | Canceled -> Canceled
-    | Completed () ->
-      (match f (Capsule.Key.unsafe_mk ()) with
-       | res ->
-         Prim.release_shared t;
-         Completed res
-       | exception exn -> Prim.release_shared_and_reraise exn t)
-  ;;
-
-  let[@inline] with_key_shared_or_cancel_freezing
-    :  C.t @ local -> Cancellation.t @ local -> 'k t @ local
-    -> f:('k Capsule.Key.t -> 'a @ l once unique) @ local once
-    -> 'a Or_canceled.t @ l once unique
-    =
-    fun w c t ~f ->
-    match[@exclave_if_stack a]
-      Prim.acquire_shared_or_cancel (C.unsafe_to_await w) c t
-    with
-    | Canceled -> Canceled
-    | Completed () ->
-      (match f (Capsule.Key.unsafe_mk ()) with
-       | res ->
-         Prim.release_shared t;
-         Completed res
-       | exception exn -> Prim.freeze_release_shared_and_reraise exn t)
   ;;]
 
   let acquire w t =
@@ -770,7 +774,7 @@ module [@inline] Make (C : Lock_common.Capability) = struct
   ;;
 
   let with_access w t ~f =
-    (with_key w t ~f:(fun key ->
+    (Unsafe.with_key w t ~f:(fun key ->
        let #(a, key) =
          Capsule.Key.access key ~f:(fun access -> { portable = f access })
        in
@@ -791,7 +795,7 @@ module [@inline] Make (C : Lock_common.Capability) = struct
 
   let with_access_or_cancel w c t ~f : _ Or_canceled.t =
     match
-      with_key_or_cancel w c t ~f:(fun key ->
+      Unsafe.with_key_or_cancel w c t ~f:(fun key ->
         let #(a, key) =
           Capsule.Key.access key ~f:(fun access -> { portable = f access })
         in
@@ -814,7 +818,7 @@ module [@inline] Make (C : Lock_common.Capability) = struct
   ;;
 
   let with_access_shared w t ~f =
-    (with_key_shared w t ~f:(fun key ->
+    (Unsafe.with_key_shared w t ~f:(fun key ->
        { contended =
            Capsule.Key.access_shared key ~f:(fun access -> { portable = f access })
        }))
@@ -823,7 +827,7 @@ module [@inline] Make (C : Lock_common.Capability) = struct
   ;;
 
   let with_access_shared_freezing w t ~f =
-    (with_key_shared_freezing w t ~f:(fun key ->
+    (Unsafe.with_key_shared_freezing w t ~f:(fun key ->
        { contended =
            Capsule.Key.access_shared key ~f:(fun access -> { portable = f access })
        }))
@@ -833,7 +837,7 @@ module [@inline] Make (C : Lock_common.Capability) = struct
 
   let with_access_shared_or_cancel w c t ~f : _ Or_canceled.t =
     match
-      with_key_shared_or_cancel w c t ~f:(fun key ->
+      Unsafe.with_key_shared_or_cancel w c t ~f:(fun key ->
         { contended =
             Capsule.Key.access_shared key ~f:(fun access -> { portable = f access })
         })
@@ -844,7 +848,7 @@ module [@inline] Make (C : Lock_common.Capability) = struct
 
   let with_access_shared_or_cancel_freezing w c t ~f : _ Or_canceled.t =
     match
-      with_key_shared_or_cancel_freezing w c t ~f:(fun key ->
+      Unsafe.with_key_shared_or_cancel_freezing w c t ~f:(fun key ->
         { contended =
             Capsule.Key.access_shared key ~f:(fun access -> { portable = f access })
         })
@@ -854,7 +858,7 @@ module [@inline] Make (C : Lock_common.Capability) = struct
   ;;
 
   let with_password w t ~f =
-    (with_key w t ~f:(fun key ->
+    (Unsafe.with_key w t ~f:(fun key ->
        Capsule.Key.with_password key ~f:(fun password -> { many = f password }) [@nontail]))
       .many
   ;;
@@ -867,7 +871,7 @@ module [@inline] Make (C : Lock_common.Capability) = struct
 
   let with_password_or_cancel w c t ~f : _ Or_canceled.t =
     match
-      with_key_or_cancel w c t ~f:(fun key ->
+      Unsafe.with_key_or_cancel w c t ~f:(fun key ->
         Capsule.Key.with_password key ~f:(fun password -> { many = f password })
         [@nontail])
     with
@@ -886,14 +890,14 @@ module [@inline] Make (C : Lock_common.Capability) = struct
   ;;
 
   let with_password_shared w t ~f =
-    (with_key_shared w t ~f:(fun key ->
+    (Unsafe.with_key_shared w t ~f:(fun key ->
        Capsule.Key.with_password_shared key ~f:(fun password -> { many = f password })
        [@nontail]))
       .many
   ;;
 
   let with_password_shared_freezing w t ~f =
-    (with_key_shared_freezing w t ~f:(fun key ->
+    (Unsafe.with_key_shared_freezing w t ~f:(fun key ->
        Capsule.Key.with_password_shared key ~f:(fun password -> { many = f password })
        [@nontail]))
       .many
@@ -901,7 +905,7 @@ module [@inline] Make (C : Lock_common.Capability) = struct
 
   let with_password_shared_or_cancel w c t ~f : _ Or_canceled.t =
     match
-      with_key_shared_or_cancel w c t ~f:(fun key ->
+      Unsafe.with_key_shared_or_cancel w c t ~f:(fun key ->
         Capsule.Key.with_password_shared key ~f:(fun password -> { many = f password })
         [@nontail])
     with
@@ -911,7 +915,7 @@ module [@inline] Make (C : Lock_common.Capability) = struct
 
   let with_password_shared_or_cancel_freezing w c t ~f : _ Or_canceled.t =
     match
-      with_key_shared_or_cancel_freezing w c t ~f:(fun key ->
+      Unsafe.with_key_shared_or_cancel_freezing w c t ~f:(fun key ->
         Capsule.Key.with_password_shared key ~f:(fun password -> { many = f password })
         [@nontail])
     with
@@ -927,13 +931,83 @@ module [@inline] Make (C : Lock_common.Capability) = struct
     key
   ;;
 
-  module Condition = struct
-    include Condition_common
+  module Condition = Condition.Make (struct
+      type nonrec 'k t = 'k t
 
-    let wait w t ~lock key =
-      wait ~acquire:Prim.acquire ~release:Prim.release w t ~lock key
-    ;;
-  end
+      let unsafe_acquire w t = Prim.acquire w t
+      let unsafe_release t = Prim.release t
+    end)
+
+  [%%template
+  [@@@alloc.default a @ l = (heap_global, stack_local)]
+
+  let[@inline] with_key_and_condition_wait_poisoning
+    : type (a : value_or_null) k.
+      Await.t @ local
+      -> k t @ local
+      -> f:
+           (k Condition.Wait.t @ local
+            -> k Capsule.Key.t @ unique
+            -> #(a * k Capsule.Key.t) @ l once unique)
+         @ local once
+      -> a @ l once unique
+    =
+    fun w t ~f ->
+    (Prim.acquire w t;
+     (Condition.with_wait [@alloc a])
+       w
+       t
+       (Capsule.Key.unsafe_mk () : k Capsule.Key.t)
+       (fun cw key ->
+         match[@exclave_if_stack a] f cw key with
+         | #(res, _key) ->
+           (* If the caller has been able to give a key back to us, the lock must be held *)
+           assert%debug (Condition.lock_is_held cw);
+           Prim.release t;
+           res
+         | exception exn ->
+           if Condition.lock_is_held cw
+           then Prim.poison_and_reraise exn t
+           else (
+             let bt = Backtrace.Exn.most_recent () in
+             Exn.raise_with_original_backtrace exn bt)) [@nontail])
+    [@exclave_if_stack a]
+  ;;
+
+  let with_key_and_condition_wait_or_cancel_poisoning
+    : type (a : value_or_null) k.
+      Await.t @ local
+      -> Cancellation.t @ local
+      -> k t @ local
+      -> f:
+           (k Condition.Wait.t @ local
+            -> k Capsule.Key.t @ unique
+            -> #(a * k Capsule.Key.t) @ l once unique)
+         @ local once
+      -> a Or_canceled.t @ l once unique
+    =
+    fun w c t ~f ->
+    match[@exclave_if_stack a] Prim.acquire_or_cancel w c t with
+    | Canceled -> Canceled
+    | Completed () ->
+      (Condition.with_wait [@alloc a])
+        w
+        t
+        (Capsule.Key.unsafe_mk () : k Capsule.Key.t)
+        (fun cw key ->
+          match[@exclave_if_stack a] f cw key with
+          | #(res, _key) ->
+            (* If the caller has been able to give a key back to us, the lock must be held *)
+            assert%debug (Condition.lock_is_held cw);
+            Prim.release t;
+            Or_canceled.Completed res
+          | exception exn ->
+            if Condition.lock_is_held cw
+            then Prim.poison_and_reraise exn t
+            else (
+              let bt = Backtrace.Exn.most_recent () in
+              Exn.raise_with_original_backtrace exn bt)) [@nontail]
+  ;;]
 
   module For_testing = struct
     let is_exclusive t = Prim.State.is_exclusive (Awaitable.get t)
@@ -1024,19 +1098,8 @@ module Sync = struct
   [%%template
   [@@@alloc.default a @ l = (heap_global, stack_local)]
 
-  let[@inline] with_key s t ~f =
-    (with_key [@alloc a]) s t ~f:(fun key -> f s key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
-  ;;
-
   let[@inline] with_key_poisoning s t ~f =
     (with_key_poisoning [@alloc a]) s t ~f:(fun key ->
-      f s key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
-  ;;
-
-  let[@inline] with_key_or_cancel s c t ~f =
-    (with_key_or_cancel [@alloc a]) s c t ~f:(fun key ->
       f s key [@nontail] [@exclave_if_stack a])
     [@nontail] [@exclave_if_stack a]
   ;;
@@ -1047,27 +1110,15 @@ module Sync = struct
     [@nontail] [@exclave_if_stack a]
   ;;
 
-  let[@inline] with_key_shared s t ~f =
-    (with_key_shared [@alloc a]) s t ~f:(fun key ->
-      f s key [@nontail] [@exclave_if_stack a])
+  let[@inline] with_key_and_condition_wait_poisoning w t ~f =
+    (with_key_and_condition_wait_poisoning [@alloc a]) w t ~f:(fun cw key ->
+      f (Await.sync w) cw key [@nontail] [@exclave_if_stack a])
     [@nontail] [@exclave_if_stack a]
   ;;
 
-  let[@inline] with_key_shared_freezing s t ~f =
-    (with_key_shared_freezing [@alloc a]) s t ~f:(fun key ->
-      f s key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
-  ;;
-
-  let[@inline] with_key_shared_or_cancel s c t ~f =
-    (with_key_shared_or_cancel [@alloc a]) s c t ~f:(fun key ->
-      f s key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
-  ;;
-
-  let[@inline] with_key_shared_or_cancel_freezing s c t ~f =
-    (with_key_shared_or_cancel_freezing [@alloc a]) s c t ~f:(fun key ->
-      f s key [@nontail] [@exclave_if_stack a])
+  let[@inline] with_key_and_condition_wait_or_cancel_poisoning w c t ~f =
+    (with_key_and_condition_wait_or_cancel_poisoning [@alloc a]) w c t ~f:(fun cw key ->
+      f (Await.sync w) cw key [@nontail] [@exclave_if_stack a])
     [@nontail] [@exclave_if_stack a]
   ;;]
 end

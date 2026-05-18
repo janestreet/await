@@ -3,6 +3,7 @@ include struct
   open Await_kernel
   module Cancellation = Cancellation
   module Or_canceled = Or_canceled
+  module Or_would_block = Or_would_block
   module Terminator = Terminator
   module Trigger = Trigger
   module Yield = Yield
@@ -23,6 +24,8 @@ module Sync = struct
   include Await_sync.Sync
 
   let blocking = Sync_blocking.sync
+  let spinning = Sync_spinning.sync
 end
 
 module Capsule = Await_capsule
+module Scratchpad = Await_scratchpad

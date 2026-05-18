@@ -97,7 +97,7 @@ module Task_handle = struct
     ; mutable am_daemon : bool [@atomic]
     }
 
-  type 'a t = { inner : 'a inner @@ aliased contended }
+  type 'a t = { inner : 'a inner @@ aliased contended } [@@unboxed]
 
   let into_scope { inner = { scope; _ } } = scope
 
@@ -194,7 +194,7 @@ let finish w t ~tasks_finished ~daemons_finished =
   Await.await_never_terminated w daemons_finished;
   Or_null.iter
     (Atomic.Loc.get [%atomic.loc t.inner.failure])
-    ~f:(fun (exn, bt) -> Exn.raise_with_original_backtrace exn bt)
+    ~f:(fun (exn, bt) -> Exn.raise_with_original_backtrace exn bt) [@nontail]
 ;;
 
 let with_ w context ~f =

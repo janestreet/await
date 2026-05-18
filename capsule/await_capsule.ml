@@ -8,7 +8,10 @@ module Sync = struct
 
   module Mutex = struct
     type 'k t = 'k Sync.Mutex.t
-    type packed = P : 'k t -> packed
+
+    [@@@ocaml.warning "-incompatible-with-upstream"]
+
+    type packed = P : 'k t -> packed [@@unboxed]
 
     let create () =
       let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
@@ -77,7 +80,8 @@ module Sync = struct
       P { data; mutex }
     ;;
 
-    let of_isolated (Capsule.Isolated.P #{ key; data }) =
+    let of_owned owned =
+      let (P #{ key; data }) = Capsule.Owned.to_repr owned in
       let mutex = Sync.Mutex.create key in
       P { mutex; data }
     ;;
@@ -93,16 +97,16 @@ module Sync = struct
       [@nontail]
     ;;
 
-    let with_guard s (P { mutex; data }) ~f =
+    let with_scoped s (P { mutex; data }) ~f =
       (Mutex.Expert.with_password s mutex ~f:(fun sync password ->
-         { aliased_many = f sync (Guard.P #{ data; password }) }))
+         { aliased_many = f sync (Scoped.P #{ data; password }) }))
         .aliased_many
     ;;
 
-    let with_guard_or_cancel s c (P { mutex; data }) ~f : _ Await_kernel.Or_canceled.t =
+    let with_scoped_or_cancel s c (P { mutex; data }) ~f : _ Await_kernel.Or_canceled.t =
       match
         Mutex.Expert.with_password_or_cancel s c mutex ~f:(fun sync password ->
-          { aliased_many = f sync (Guard.P #{ data; password }) })
+          { aliased_many = f sync (Scoped.P #{ data; password }) })
       with
       | Completed { aliased_many = res } -> Completed res
       | Canceled -> Canceled
@@ -143,7 +147,10 @@ module Sync = struct
 
   module Rwlock = struct
     type 'k t = 'k Sync.Rwlock.t
-    type packed = P : 'k t -> packed
+
+    [@@@ocaml.warning "-incompatible-with-upstream"]
+
+    type packed = P : 'k t -> packed [@@unboxed]
 
     let create () =
       let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
@@ -248,7 +255,8 @@ module Sync = struct
       P { data; rwlock }
     ;;
 
-    let of_isolated (Capsule.Isolated.P #{ key; data }) =
+    let of_owned owned =
+      let (P #{ key; data }) = Capsule.Owned.to_repr owned in
       let rwlock = Sync.Rwlock.create key in
       P { rwlock; data }
     ;;
@@ -265,18 +273,16 @@ module Sync = struct
       [@nontail]
     ;;
 
-    let with_write_guard s (P { rwlock; data }) ~f =
+    let with_scoped s (P { rwlock; data }) ~f =
       (Rwlock.Expert.with_password s rwlock ~f:(fun sync password ->
-         { aliased_many = f sync (Guard.P #{ password; data }) }))
+         { aliased_many = f sync (Scoped.P #{ password; data }) }))
         .aliased_many
     ;;
 
-    let with_write_guard_or_cancel s c (P { rwlock; data }) ~f
-      : _ Await_kernel.Or_canceled.t
-      =
+    let with_scoped_or_cancel s c (P { rwlock; data }) ~f : _ Await_kernel.Or_canceled.t =
       match
         Rwlock.Expert.with_password_or_cancel s c rwlock ~f:(fun sync password ->
-          { aliased_many = f sync (Guard.P #{ password; data }) })
+          { aliased_many = f sync (Scoped.P #{ password; data }) })
       with
       | Completed { aliased_many = res } -> Completed res
       | Canceled -> Canceled
@@ -306,18 +312,19 @@ module Sync = struct
       @@ stateless
       = "%identity"
 
-    let with_read_guard s (P { rwlock; data }) ~f =
+    let with_scoped_shared s (P { rwlock; data }) ~f =
       (Rwlock.Expert.with_password_shared s rwlock ~f:(fun sync password ->
-         { aliased_many = f sync (Guard.Shared.P #{ password; data = wrap_shared data }) }))
+         { aliased_many = f sync (Scoped.Shared.P #{ password; data = wrap_shared data })
+         }))
         .aliased_many
     ;;
 
-    let with_read_guard_or_cancel s c (P { rwlock; data }) ~f
+    let with_scoped_shared_or_cancel s c (P { rwlock; data }) ~f
       : _ Await_kernel.Or_canceled.t
       =
       match
         Rwlock.Expert.with_password_shared_or_cancel s c rwlock ~f:(fun sync password ->
-          { aliased_many = f sync (Guard.Shared.P #{ password; data = wrap_shared data })
+          { aliased_many = f sync (Scoped.Shared.P #{ password; data = wrap_shared data })
           })
       with
       | Completed { aliased_many = res } -> Completed res
@@ -337,14 +344,13 @@ module Sync = struct
         [@nontail]
       ;;
 
-      let with_write_guard s (P { rwlock; data }) ~f =
+      let with_scoped s (P { rwlock; data }) ~f =
         (Rwlock.Expert.with_password_poisoning s rwlock ~f:(fun sync password ->
-           { aliased_many = f sync (Guard.P #{ password; data }) }))
+           { aliased_many = f sync (Scoped.P #{ password; data }) }))
           .aliased_many
       ;;
 
-      let with_write_guard_or_cancel s c (P { rwlock; data }) ~f
-        : _ Await_kernel.Or_canceled.t
+      let with_scoped_or_cancel s c (P { rwlock; data }) ~f : _ Await_kernel.Or_canceled.t
         =
         match
           Rwlock.Expert.with_password_or_cancel_poisoning
@@ -352,7 +358,7 @@ module Sync = struct
             c
             rwlock
             ~f:(fun sync password ->
-              { aliased_many = f sync (Guard.P #{ password; data }) })
+              { aliased_many = f sync (Scoped.P #{ password; data }) })
         with
         | Completed { aliased_many = res } -> Completed res
         | Canceled -> Canceled
@@ -369,6 +375,31 @@ module Sync = struct
           f s ((Capsule.Data.unwrap [@mode shared]) ~access data))
         [@nontail]
       ;;
+
+      let with_scoped_shared s (P { rwlock; data }) ~f =
+        (Rwlock.Expert.with_password_shared s rwlock ~f:(fun sync password ->
+           { aliased_many =
+               f sync (Scoped.Shared.P #{ password; data = wrap_shared data })
+           }))
+          .aliased_many
+      ;;
+
+      let with_scoped_shared_or_cancel s c (P { rwlock; data }) ~f
+        : _ Await_kernel.Or_canceled.t
+        =
+        match
+          Rwlock.Expert.with_password_shared_or_cancel_freezing
+            s
+            c
+            rwlock
+            ~f:(fun sync password ->
+              { aliased_many =
+                  f sync (Scoped.Shared.P #{ password; data = wrap_shared data })
+              })
+        with
+        | Completed { aliased_many = res } -> Completed res
+        | Canceled -> Canceled
+      ;;
     end
 
     let iter_write = with_write
@@ -381,7 +412,10 @@ module Await = struct
 
   module Mutex = struct
     type 'k t = 'k Await.Mutex.t
-    type packed = P : 'k t -> packed
+
+    [@@@ocaml.warning "-incompatible-with-upstream"]
+
+    type packed = P : 'k t -> packed [@@unboxed]
 
     let create () =
       let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
@@ -450,7 +484,8 @@ module Await = struct
       P { data; mutex }
     ;;
 
-    let of_isolated (Capsule.Isolated.P #{ key; data }) =
+    let of_owned owned =
+      let (P #{ key; data }) = Capsule.Owned.to_repr owned in
       let mutex = Await.Mutex.create key in
       P { mutex; data }
     ;;
@@ -466,17 +501,18 @@ module Await = struct
       [@nontail]
     ;;
 
-    let with_guard await (P { mutex; data }) ~f =
+    let with_scoped await (P { mutex; data }) ~f =
       (Mutex.Expert.with_password await mutex ~f:(fun password ->
-         { aliased_many = f (Guard.P #{ data; password }) }))
+         { aliased_many = f (Scoped.P #{ data; password }) }))
         .aliased_many
     ;;
 
-    let with_guard_or_cancel await c (P { mutex; data }) ~f : _ Await_kernel.Or_canceled.t
+    let with_scoped_or_cancel await c (P { mutex; data }) ~f
+      : _ Await_kernel.Or_canceled.t
       =
       match
         Mutex.Expert.with_password_or_cancel await c mutex ~f:(fun password ->
-          { aliased_many = f (Guard.P #{ data; password }) })
+          { aliased_many = f (Scoped.P #{ data; password }) })
       with
       | Completed { aliased_many = res } -> Completed res
       | Canceled -> Canceled
@@ -519,7 +555,10 @@ module Await = struct
 
   module Rwlock = struct
     type 'k t = 'k Await.Rwlock.t
-    type packed = P : 'k t -> packed
+
+    [@@@ocaml.warning "-incompatible-with-upstream"]
+
+    type packed = P : 'k t -> packed [@@unboxed]
 
     let create () =
       let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
@@ -624,7 +663,8 @@ module Await = struct
       P { data; rwlock }
     ;;
 
-    let of_isolated (Capsule.Isolated.P #{ key; data }) =
+    let of_owned owned =
+      let (P #{ key; data }) = Capsule.Owned.to_repr owned in
       let rwlock = Await.Rwlock.create key in
       P { rwlock; data }
     ;;
@@ -641,18 +681,18 @@ module Await = struct
       [@nontail]
     ;;
 
-    let with_write_guard await (P { rwlock; data }) ~f =
+    let with_scoped await (P { rwlock; data }) ~f =
       (Rwlock.Expert.with_password await rwlock ~f:(fun password ->
-         { aliased_many = f (Guard.P #{ password; data }) }))
+         { aliased_many = f (Scoped.P #{ password; data }) }))
         .aliased_many
     ;;
 
-    let with_write_guard_or_cancel await c (P { rwlock; data }) ~f
+    let with_scoped_or_cancel await c (P { rwlock; data }) ~f
       : _ Await_kernel.Or_canceled.t
       =
       match
         Rwlock.Expert.with_password_or_cancel await c rwlock ~f:(fun password ->
-          { aliased_many = f (Guard.P #{ password; data }) })
+          { aliased_many = f (Scoped.P #{ password; data }) })
       with
       | Completed { aliased_many = res } -> Completed res
       | Canceled -> Canceled
@@ -682,18 +722,18 @@ module Await = struct
       @@ stateless
       = "%identity"
 
-    let with_read_guard await (P { rwlock; data }) ~f =
+    let with_scoped_shared await (P { rwlock; data }) ~f =
       (Rwlock.Expert.with_password_shared await rwlock ~f:(fun password ->
-         { aliased_many = f (Guard.Shared.P #{ password; data = wrap_shared data }) }))
+         { aliased_many = f (Scoped.Shared.P #{ password; data = wrap_shared data }) }))
         .aliased_many
     ;;
 
-    let with_read_guard_or_cancel await c (P { rwlock; data }) ~f
+    let with_scoped_shared_or_cancel await c (P { rwlock; data }) ~f
       : _ Await_kernel.Or_canceled.t
       =
       match
         Rwlock.Expert.with_password_shared_or_cancel await c rwlock ~f:(fun password ->
-          { aliased_many = f (Guard.Shared.P #{ password; data = wrap_shared data }) })
+          { aliased_many = f (Scoped.Shared.P #{ password; data = wrap_shared data }) })
       with
       | Completed { aliased_many = res } -> Completed res
       | Canceled -> Canceled
@@ -712,13 +752,13 @@ module Await = struct
         [@nontail]
       ;;
 
-      let with_write_guard await (P { rwlock; data }) ~f =
+      let with_scoped await (P { rwlock; data }) ~f =
         (Rwlock.Expert.with_password_poisoning await rwlock ~f:(fun password ->
-           { aliased_many = f (Guard.P #{ password; data }) }))
+           { aliased_many = f (Scoped.P #{ password; data }) }))
           .aliased_many
       ;;
 
-      let with_write_guard_or_cancel await c (P { rwlock; data }) ~f
+      let with_scoped_or_cancel await c (P { rwlock; data }) ~f
         : _ Await_kernel.Or_canceled.t
         =
         match
@@ -726,7 +766,7 @@ module Await = struct
             await
             c
             rwlock
-            ~f:(fun password -> { aliased_many = f (Guard.P #{ password; data }) })
+            ~f:(fun password -> { aliased_many = f (Scoped.P #{ password; data }) })
         with
         | Completed { aliased_many = res } -> Completed res
         | Canceled -> Canceled
@@ -744,13 +784,13 @@ module Await = struct
         [@nontail]
       ;;
 
-      let with_read_guard await (P { rwlock; data }) ~f =
+      let with_scoped_shared await (P { rwlock; data }) ~f =
         (Rwlock.Expert.with_password_shared_freezing await rwlock ~f:(fun password ->
-           { aliased_many = f (Guard.Shared.P #{ password; data = wrap_shared data }) }))
+           { aliased_many = f (Scoped.Shared.P #{ password; data = wrap_shared data }) }))
           .aliased_many
       ;;
 
-      let with_read_guard_or_cancel await c (P { rwlock; data }) ~f
+      let with_scoped_shared_or_cancel await c (P { rwlock; data }) ~f
         : _ Await_kernel.Or_canceled.t
         =
         match
@@ -759,7 +799,8 @@ module Await = struct
             c
             rwlock
             ~f:(fun password ->
-              { aliased_many = f (Guard.Shared.P #{ password; data = wrap_shared data }) })
+              { aliased_many = f (Scoped.Shared.P #{ password; data = wrap_shared data })
+              })
         with
         | Completed { aliased_many = res } -> Completed res
         | Canceled -> Canceled

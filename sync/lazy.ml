@@ -5,15 +5,17 @@ include Lazy_intf
 
 module Expert = struct
   module Make (C : Lock_common_intf.Capability) = struct
-    (*=The underlying state machine of a lazy:
+    (* The underlying state machine of a lazy:
 
-                                          [from_val]-----+----> Computed
-                                                         |
-    [from_fun] -> Uncomputed --[force]--> Computing --+--+
-                                  |                   |  |   
-                                  +-----> Awaiters----+  +----> Error
+       {v
+                                               [from_val]-----+----> Computed
+                                                              |
+         [from_fun] -> Uncomputed --[force]--> Computing --+--+
+                                       |                   |  |
+                                       +-----> Awaiters----+  +----> Error
+       v}
 
-   The [Computed] and [Error] states are terminal. *)
+       The [Computed] and [Error] states are terminal. *)
 
     type ('a : value_or_null) state =
       | Uncomputed of
@@ -45,7 +47,7 @@ module Expert = struct
         (Uncomputed (magic_many_lazy_thunk (fun #(cap, { global = t }) -> f cap t)))
     ;;
 
-    let from_fun ?padded f = from_fun_fixed ?padded (fun cap _ -> f cap)
+    let from_fun ?padded f = from_fun_fixed ?padded (fun cap _ -> f cap) [@tail]
 
     type ('a : value_or_null, 'r : value_or_null) result =
       | Value : ('a : value_or_null). ('a, 'a) result

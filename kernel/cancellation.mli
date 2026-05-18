@@ -24,13 +24,13 @@ type t = Cancellation0.t
 (** [is_canceled t ~terminator] is [true] if [t] has been canceled and [false] otherwise.
     Once [is_canceled t ~terminator] is [true] it will never again become [false].
 
-    @raise {!Terminator.Terminated} if [terminator] has been terminated. *)
+    @raise Await.Terminated if [terminator] has been terminated. *)
 val is_canceled : t @ local -> terminator:Terminator.t @ local -> bool
 
 (** [check t ~terminator] is [Canceled] if [t] has been canceled, or [Completed ()]
     otherwise.
 
-    @raise {!Terminator.Terminated} if [terminator] has been terminated. *)
+    @raise Await.Terminated if [terminator] has been terminated. *)
 val check : t @ local -> terminator:Terminator.t @ local -> unit Or_canceled.t
 
 (** [same t1 t2] determines whether the tokens [t1] and [t2] are the one and the same. *)
@@ -64,14 +64,18 @@ val source : t @ local -> Source.t or_null
     canceled when [Source.cancel] has been called on the source.
 
     Panics if [t] still has unsignaled attached triggers when [f] finishes. *)
-val with_ : ('a : value_or_null). (t @ local -> 'a) @ local once -> 'a
+val with_
+  : ('a : value_or_null).
+  (t @ local -> 'a @ once unique) @ local once -> 'a @ once unique
 
 (** [with_linked t f] creates a fresh cancellation token linked to [t] and passes it to
     [f]. The token is canceled when either [t] is canceled or [Source.cancel] has been
     called on the source.
 
     Panics if [t] still has unsignaled attached triggers when [f] finishes. *)
-val with_linked : ('a : value_or_null). t @ local -> (t @ local -> 'a) @ local once -> 'a
+val with_linked
+  : ('a : value_or_null).
+  t @ local -> (t @ local -> 'a @ once unique) @ local once -> 'a @ once unique
 
 (** [with_linked_multi ts f] creates a fresh cancellation token and passes it to [f]. The
     token is canceled when any of [ts] are canceled or when [Source.cancel] has been
@@ -80,7 +84,7 @@ val with_linked : ('a : value_or_null). t @ local -> (t @ local -> 'a) @ local o
     Panics if [t] still has unsignaled attached triggers when [f] finishes. *)
 val with_linked_multi
   : ('a : value_or_null).
-  t list @ local -> (t @ local -> 'a) @ local once -> 'a
+  t list @ local -> (t @ local -> 'a @ once unique) @ local once -> 'a @ once unique
 
 module Link : sig
   (** The result of {!add_trigger}. *)

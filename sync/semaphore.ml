@@ -95,7 +95,10 @@ module State : sig @@ portable
 end = struct
   (* The state looks like this:
 
-     Bit: [      0      |   1  to  n-1   ] Use: [ no_awaiters | (signed) value ]
+     {v
+       Bit: [      0      |   1  to  n-1   ]
+       Use: [ no_awaiters | (signed) value ]
+     v}
 
      The value is treated as signed, but operations will normalize it to be non-negative
      unless the value is less than [-poisoned_abs / 2], which is taken to mean that the
