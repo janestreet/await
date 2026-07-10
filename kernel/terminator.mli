@@ -41,8 +41,9 @@ val is_terminatable : t @ local -> bool
     token is not terminatable. *)
 val source : t @ local -> Source.t or_null
 
-(** [with_ f] creates a fresh termination token with an associated source and passes both
-    to [f]. The token is terminated when [Source.terminate] has been called on the source.
+(** [with_ f] creates a fresh termination token with an associated source and passes the
+    token to [f]. The token is terminated when [Source.terminate] has been called on the
+    source.
 
     Panics if [t] still has unsignaled attached triggers when [f] finishes. *)
 val with_
@@ -50,7 +51,7 @@ val with_
   (t @ local -> 'a @ once unique) @ local once -> 'a @ once unique
 
 (** [with_linked t f] creates a fresh termination token with an associated source and
-    passes both to [f]. The token is terminated when either [t] is terminated or
+    passes the token to [f]. The token is terminated when either [t] is terminated or
     [Source.terminate] has been called on the source.
 
     Panics if [t] still has unsignaled attached triggers when [f] finishes. *)
@@ -59,7 +60,7 @@ val with_linked
   t @ local -> (t @ local -> 'a @ once unique) @ local once -> 'a @ once unique
 
 (** [with_linked_multi ts f] creates a fresh termination token with an associated source
-    and passes them both to [f]. The token is canceled when any of [ts] are terminated or
+    and passes the token to [f]. The token is canceled when any of [ts] are terminated or
     when [Source.terminate] has been called on the source.
 
     Panics if [t] still has unsignaled attached triggers when [f] finishes. *)
@@ -115,4 +116,12 @@ module Expert : sig
 
       Any other use than this is probably a mistake. *)
   val cancellation : t @ local -> Cancellation0.t @ local
+
+  (** [check_clean_and_close t] checks that [t] has no unsignalled triggers attached to it
+      and then terminates [t].
+
+      If you are manually managing a termination token, then it is good practice to ensure
+      that no triggers remain attached to the token after the token is no longer in use.
+      Doing so can reveal resource leaks and issues with scoping. *)
+  val check_clean_and_close : t @ local -> unit
 end

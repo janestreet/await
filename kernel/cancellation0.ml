@@ -20,7 +20,7 @@ open! Base
 open Basement
 open Portable_kernel
 
-type%fuelproof _ state_inner : value mod contended non_float portable =
+type _ state_inner : value mod contended non_float portable =
   | Canceled : [> `Canceled ] state_inner
   | Nil : [> `Nil ] state_inner
   | Cons :
@@ -227,6 +227,12 @@ let with_linked parent body = with_linked_multi [ parent ] body [@nontail]
 let with_ body = with_linked_multi [] body
 
 module Expert = struct
+  let check_clean_and_close t =
+    match t.token with
+    | Never -> ()
+    | Token _ as token -> check_clean_and_close token
+  ;;
+
   let globalize { token } = { token }
   let create () = { token = Token { state = S Nil } }
 end

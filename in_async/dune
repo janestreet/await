@@ -3,4 +3,4 @@
  (public_name await.in_async)
  (libraries async await_kernel core handled_effect portable)
  (preprocess
-  (pps ppx_jane)))
+  (pps ppx_debug_assert ppx_jane)))

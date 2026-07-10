@@ -1,7 +1,7 @@
 @@ portable
 
 open Await_kernel
-module Capsule := Capsule.Expert
+module Capsule := Capsule.Prim
 
 module Sync : sig
   (** A poisonable and freezable multiple readers, single writer lock that can only be
@@ -54,6 +54,25 @@ module Sync : sig
           -> 'a @ contended once portable unique)
        @ local once portable unyielding
     -> 'a @ contended once portable unique
+
+  (** [try_with_access_shared t ~f] attempts to acquire [t] for reading without blocking.
+      If successful, it runs [f] as [with_access_shared] would, but without taking a
+      [Sync.t] because no waiting is needed. Otherwise, it is [Would_block]. *)
+  val try_with_access_shared
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Access.t @ shared -> 'a @ contended once portable unique)
+       @ local once portable unyielding
+    -> 'a Or_would_block.t @ contended once portable unique
+
+  (** [try_with_access_shared_freezing t ~f] is [try_with_access_shared t ~f], but freezes
+      [t] if [f] raises an uncaught exception. *)
+  val try_with_access_shared_freezing
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Access.t @ shared -> 'a @ contended once portable unique)
+       @ local once portable unyielding
+    -> 'a Or_would_block.t @ contended once portable unique
 
   (** [with_access_shared_or_cancel w c t ~f] is [Completed (with_access_shared w t ~f)]
       if [c] is not canceled, otherwise it is [Canceled]. *)
@@ -111,6 +130,25 @@ module Sync : sig
        @ local once portable unyielding
     -> 'a @ contended once portable unique
 
+  (** [try_with_access t ~f] attempts to acquire [t] for writing without blocking. If
+      successful, it runs [f] as [with_access] would, but without taking a [Sync.t]
+      because no waiting is needed. Otherwise, it is [Would_block]. *)
+  val try_with_access
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Access.t -> 'a @ contended once portable unique)
+       @ local once portable unyielding
+    -> 'a Or_would_block.t @ contended once portable unique
+
+  (** [try_with_access_poisoning t ~f] is [try_with_access t ~f], but poisons [t] if [f]
+      raises an uncaught exception. *)
+  val try_with_access_poisoning
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Access.t -> 'a @ contended once portable unique)
+       @ local once portable unyielding
+    -> 'a Or_would_block.t @ contended once portable unique
+
   (** [with_access_or_cancel w c t ~f] is [Completed (with_access w t ~f)] if [c] is not
       canceled, otherwise it is [Canceled]. *)
   val with_access_or_cancel
@@ -160,6 +198,25 @@ module Sync : sig
     -> f:(Sync.t @ local -> 'k Capsule.Password.Shared.t @ forkable local -> 'a @ unique)
        @ local once unyielding
     -> 'a @ unique
+
+  (** [try_with_password_shared t ~f] attempts to acquire [t] for reading without
+      blocking. If successful, it runs [f] as [with_password_shared] would, but without
+      taking a [Sync.t] because no waiting is needed. Otherwise, it is [Would_block]. *)
+  val try_with_password_shared
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Password.Shared.t @ forkable local -> 'a @ unique)
+       @ local once unyielding
+    -> 'a Or_would_block.t @ unique
+
+  (** [try_with_password_shared_freezing t ~f] is [try_with_password_shared t ~f], but
+      freezes [t] if [f] raises an uncaught exception. *)
+  val try_with_password_shared_freezing
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Password.Shared.t @ forkable local -> 'a @ unique)
+       @ local once unyielding
+    -> 'a Or_would_block.t @ unique
 
   (** [with_password_shared_or_cancel w c t ~f] is
       [Completed (with_password_shared w t ~f)] if [c] is not canceled, otherwise it is
@@ -212,6 +269,23 @@ module Sync : sig
        @ local once unyielding
     -> 'a @ unique
 
+  (** [try_with_password t ~f] attempts to acquire [t] for writing without blocking. If
+      successful, it runs [f] as [with_password] would, but without taking a [Sync.t]
+      because no waiting is needed. Otherwise, it is [Would_block]. *)
+  val try_with_password
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once unyielding
+    -> 'a Or_would_block.t @ unique
+
+  (** [try_with_password_poisoning t ~f] is [try_with_password t ~f], but poisons [t] if
+      [f] raises an uncaught exception. *)
+  val try_with_password_poisoning
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once unyielding
+    -> 'a Or_would_block.t @ unique
+
   (** [with_password_or_cancel w c t ~f] is [Completed (with_password w t ~f)] if [c] is
       not canceled, otherwise it is [Canceled]. *)
   val with_password_or_cancel
@@ -237,7 +311,7 @@ module Sync : sig
   (** {2 With a [Key]} *)
 
   [%%template:
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   (** [with_key_poisoning s t ~f] locks [t] for writing and runs [f], providing it a key
       for ['k] uniquely. If [t] is locked for reading or writing, then [with_key] uses [s]
@@ -260,6 +334,16 @@ module Sync : sig
        @ local once unyielding
     -> 'a @ l once unique
 
+  (** [try_with_key_poisoning t ~f] attempts to acquire [t] for writing without blocking.
+      If successful, it runs [f] as [with_key_poisoning] would, but without taking a
+      [Sync.t] because no waiting is needed. Otherwise, it is [Would_block]. *)
+  val try_with_key_poisoning
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+       @ local once unyielding
+    -> 'a Or_would_block.t @ l once unique
+
   (** [with_key_or_cancel_poisoning w c t ~f] is [with_key_or_cancel w c t ~f], but
       poisons [t] if [f] raises an uncaught exception. *)
   val with_key_or_cancel_poisoning
@@ -279,7 +363,7 @@ module Sync : sig
   module Condition : Condition_intf.S with type 'k lock := 'k t (** @open *)
 
   [%%template:
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   (** [with_key_and_condition_wait_poisoning w t ~f] locks [t] and runs [f], providing it
       with a key for ['k] uniquely and a ['k Condition.Wait.t] which provides the ability
@@ -400,6 +484,25 @@ module Await : sig
        @ local once portable
     -> 'a @ contended once portable unique
 
+  (** [try_with_access_shared t ~f] attempts to acquire [t] for reading without blocking.
+      If successful, it runs [f] as [with_access_shared] would, but without taking a
+      [Await.t] because no waiting is needed. Otherwise, it is [Would_block]. *)
+  val try_with_access_shared
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Access.t @ shared -> 'a @ contended once portable unique)
+       @ local once portable
+    -> 'a Or_would_block.t @ contended once portable unique
+
+  (** [try_with_access_shared_freezing t ~f] is [try_with_access_shared t ~f], but freezes
+      [t] if [f] raises an uncaught exception. *)
+  val try_with_access_shared_freezing
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Access.t @ shared -> 'a @ contended once portable unique)
+       @ local once portable
+    -> 'a Or_would_block.t @ contended once portable unique
+
   (** [with_access_shared_or_cancel w c t ~f] is [Completed (with_access_shared w t ~f)]
       if [c] is not canceled, otherwise it is [Canceled]. *)
   val with_access_shared_or_cancel
@@ -450,6 +553,25 @@ module Await : sig
        @ local once portable
     -> 'a @ contended once portable unique
 
+  (** [try_with_access t ~f] attempts to acquire [t] for writing without blocking. If
+      successful, it runs [f] as [with_access] would, but without taking an [Await.t]
+      because no waiting is needed. Otherwise, it is [Would_block]. *)
+  val try_with_access
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Access.t -> 'a @ contended once portable unique)
+       @ local once portable
+    -> 'a Or_would_block.t @ contended once portable unique
+
+  (** [try_with_access_poisoning t ~f] is [try_with_access t ~f], but poisons [t] if [f]
+      raises an uncaught exception. *)
+  val try_with_access_poisoning
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Access.t -> 'a @ contended once portable unique)
+       @ local once portable
+    -> 'a Or_would_block.t @ contended once portable unique
+
   (** [with_access_or_cancel w c t ~f] is [Completed (with_access w t ~f)] if [c] is not
       canceled, otherwise it is [Canceled]. *)
   val with_access_or_cancel
@@ -498,6 +620,23 @@ module Await : sig
     -> f:('k Capsule.Password.Shared.t @ forkable local -> 'a @ unique) @ local once
     -> 'a @ unique
 
+  (** [try_with_password_shared t ~f] attempts to acquire [t] for reading without
+      blocking. If successful, it runs [f] as [with_password_shared] would, but without
+      taking an [Await.t] because no waiting is needed. Otherwise, it is [Would_block]. *)
+  val try_with_password_shared
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Password.Shared.t @ forkable local -> 'a @ unique) @ local once
+    -> 'a Or_would_block.t @ unique
+
+  (** [try_with_password_shared_freezing t ~f] is [try_with_password_shared t ~f], but
+      freezes [t] if [f] raises an uncaught exception. *)
+  val try_with_password_shared_freezing
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Password.Shared.t @ forkable local -> 'a @ unique) @ local once
+    -> 'a Or_would_block.t @ unique
+
   (** [with_password_shared_or_cancel w c t ~f] is
       [Completed (with_password_shared w t ~f)] if [c] is not canceled, otherwise it is
       [Canceled]. *)
@@ -545,6 +684,23 @@ module Await : sig
     -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
     -> 'a @ unique
 
+  (** [try_with_password t ~f] attempts to acquire [t] for writing without blocking. If
+      successful, it runs [f] as [with_password] would, but without taking an [Await.t]
+      because no waiting is needed. Otherwise, it is [Would_block]. *)
+  val try_with_password
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
+    -> 'a Or_would_block.t @ unique
+
+  (** [try_with_password_poisoning t ~f] is [try_with_password t ~f], but poisons [t] if
+      [f] raises an uncaught exception. *)
+  val try_with_password_poisoning
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Password.t @ local -> 'a @ unique) @ local once
+    -> 'a Or_would_block.t @ unique
+
   (** [with_password_or_cancel w c t ~f] is [Completed (with_password w t ~f)] if [c] is
       not canceled, otherwise it is [Canceled]. *)
   val with_password_or_cancel
@@ -568,7 +724,7 @@ module Await : sig
   (** {2 With a [Key]} *)
 
   [%%template:
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   (** [with_key_poisoning w t ~f] is [with_key w t ~f], but poisons [t] if [f] raises an
       uncaught exception. *)
@@ -579,6 +735,16 @@ module Await : sig
     -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
        @ local once
     -> 'a @ l once unique
+
+  (** [try_with_key_poisoning t ~f] attempts to acquire [t] for writing without blocking.
+      If successful, it runs [f] as [with_key_poisoning] would, but without taking a
+      [Await.t] because no waiting is needed. Otherwise, it is [Would_block]. *)
+  val try_with_key_poisoning
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+       @ local once
+    -> 'a Or_would_block.t @ l once unique
 
   (** [with_key_or_cancel_poisoning w c t ~f] is [with_key_or_cancel w c t ~f], but
       poisons [t] if [f] raises an uncaught exception. *)
@@ -596,7 +762,7 @@ module Await : sig
   module Condition : Condition_intf.S with type 'k lock := 'k t (** @open *)
 
   [%%template:
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   (** [with_key_and_condition_wait_poisoning w t ~f] locks [t] and runs [f], providing it
       with a key for ['k] uniquely and a ['k Condition.Wait.t] which provides the ability
@@ -695,6 +861,13 @@ module Await : sig
       @raise Terminated if [w] is terminated before the lock is acquired. *)
   val acquire_shared : Await.t @ local -> 'k t -> 'k Shared_guard.t @ unique
 
+  (** [try_acquire_shared t] attempts to acquire [t] for reading without blocking, and
+      does not take an [Await.t] because no waiting is needed. It is [Would_block] if [t]
+      is locked for writing.
+
+      @raise Poisoned if [t] cannot be acquired because it is poisoned. *)
+  val try_acquire_shared : 'k t -> 'k Shared_guard.t Or_would_block.t @ unique
+
   (** [acquire_shared_or_cancel w c t] is [Completed (acquire_shared w t)] if [c] is not
       canceled, otherwise it is [Canceled].
 
@@ -760,6 +933,14 @@ module Await : sig
       @raise Frozen if [t] cannot be acquired for writing because it is frozen.
       @raise Terminated if [w] is terminated before the lock is acquired. *)
   val acquire : Await.t @ local -> 'k t -> 'k Guard.t @ unique
+
+  (** [try_acquire t] attempts to acquire [t] for writing without blocking, and does not
+      take an [Await.t] because no waiting is needed. It is [Would_block] if [t] is
+      locked.
+
+      @raise Poisoned if [t] cannot be acquired because it is poisoned.
+      @raise Frozen if [t] cannot be acquired for writing because it is frozen. *)
+  val try_acquire : 'k t -> 'k Guard.t Or_would_block.t @ unique
 
   (** [acquire_or_cancel w c t] is [Completed (acquire w t)] if [c] is not canceled,
       otherwise it is [Canceled].

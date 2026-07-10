@@ -16,7 +16,7 @@ struct
   type t = pack iarray
 
   let create_one () =
-    let (P key) = Capsule.Expert.create () in
+    let (P key) = Capsule.Prim.create () in
     let mutex = Sync.Mutex.create key in
     let data = Capsule.Data.create (fun () -> ref Null) in
     P #{ mutex; data }
@@ -38,7 +38,7 @@ struct
     in
     match
       Sync.Mutex.try_with_access mutex ~f:(fun [@inline] access ->
-        let state = Capsule.Expert.Data.Local.unwrap ~access data in
+        let state = Capsule.Prim.Data.Local.unwrap ~access data in
         let state =
           match !state with
           | Null ->

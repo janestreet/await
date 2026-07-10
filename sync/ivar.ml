@@ -32,6 +32,7 @@ module State : sig @@ portable
 
   val is_empty : ('a : value_or_null). 'a t @ contended local -> bool
   val is_awaiters : ('a : value_or_null). 'a t @ contended local -> bool
+  val is_value : ('a : value_or_null). 'a t @ contended local -> bool
   val value_opt : 'a t @ contended -> 'a or_null @ contended portable
   val value_unsafe : ('a : value_or_null). 'a t @ contended -> 'a @ contended portable
 end = struct
@@ -147,3 +148,6 @@ let peek { t } =
   let value_or_empty_or_awaiters = Awaitable.get t in
   State.value_opt value_or_empty_or_awaiters
 ;;
+
+let is_full { t } = State.is_value (Awaitable.get t)
+let is_empty t = not (is_full t)

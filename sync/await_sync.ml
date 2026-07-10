@@ -18,6 +18,7 @@ module Await = struct
   module Ivar = Ivar
   module Lazy = Lazy.Await
   module Mutex = Mutex.Await
+  module Bounded_spsc_queue = Bounded_spsc_queue
   module Mpmc_queue = Mpmc_queue
   module Mvar = Mvar
   module Rwlock = Rwlock.Await
@@ -34,4 +35,6 @@ module Expert = struct
 
     include Lazy.Expert
   end
+
+  module Parking_lot = Parking_lot
 end

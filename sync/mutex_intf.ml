@@ -40,7 +40,7 @@ end
 
 module type Sync = sig @@ portable
   open Await_kernel
-  module Capsule := Capsule.Expert
+  module Capsule := Capsule.Prim
 
   (** Mutexes that can only be held for a bounded period of time *)
 
@@ -61,6 +61,9 @@ module type Sync = sig @@ portable
 
   (** {2 With uncontended [Access]} *)
 
+  [%%template:
+  [@@@mode.default l = (local, global)]
+
   (** [with_access s t ~f] acquires [t], runs [f] within the associated capsule, then
       releases [t]. If [t] is locked then uses [s] to wait until it is unlocked. The
       [Sync.t] is passed to [f] to allow further use of synchronization primitives.
@@ -70,18 +73,18 @@ module type Sync = sig @@ portable
     : ('a : value_or_null) 'k.
     Sync.t @ local
     -> 'k t @ local
-    -> f:(Sync.t @ local -> 'k Capsule.Access.t -> 'a @ contended once portable unique)
+    -> f:(Sync.t @ local -> 'k Capsule.Access.t -> 'a @ contended l once portable unique)
        @ local once portable unyielding
-    -> 'a @ contended once portable unique
+    -> 'a @ contended l once portable unique
 
   (** [try_with_access t ~f] is like {!with_access}, but returns [Would_block] if [t] is
       currently locked. *)
   val try_with_access
     : ('a : value_or_null) 'k.
     'k t @ local
-    -> f:('k Capsule.Access.t -> 'a @ contended once portable unique)
+    -> f:('k Capsule.Access.t -> 'a @ contended l once portable unique)
        @ local once portable unyielding
-    -> 'a Or_would_block.t @ contended once portable unique
+    -> 'a Or_would_block.t @ contended l once portable unique
 
   (** [with_access_poisoning s t ~f] acquires [t], runs [f] within the associated capsule,
       then releases [t]. If [t] is locked then uses [s] to wait until it is unlocked. The
@@ -94,18 +97,18 @@ module type Sync = sig @@ portable
     : ('a : value_or_null) 'k.
     Sync.t @ local
     -> 'k t @ local
-    -> f:(Sync.t @ local -> 'k Capsule.Access.t -> 'a @ contended once portable unique)
+    -> f:(Sync.t @ local -> 'k Capsule.Access.t -> 'a @ contended l once portable unique)
        @ local once portable unyielding
-    -> 'a @ contended once portable unique
+    -> 'a @ contended l once portable unique
 
   (** [try_with_access_poisoning t ~f] is like {!with_access_poisoning}, but returns
       [Would_block] if [t] is currently locked. *)
   val try_with_access_poisoning
     : ('a : value_or_null) 'k.
     'k t @ local
-    -> f:('k Capsule.Access.t -> 'a @ contended once portable unique)
+    -> f:('k Capsule.Access.t -> 'a @ contended l once portable unique)
        @ local once portable unyielding
-    -> 'a Or_would_block.t @ contended once portable unique
+    -> 'a Or_would_block.t @ contended l once portable unique
 
   (** [with_access_or_cancel s c t f] is [Completed (with_access s t f)] if [c] is not
       canceled, otherwise it is [Canceled]. *)
@@ -114,9 +117,9 @@ module type Sync = sig @@ portable
     Sync.t @ local
     -> Cancellation.t @ local
     -> 'k t @ local
-    -> f:(Sync.t @ local -> 'k Capsule.Access.t -> 'a @ contended once portable unique)
+    -> f:(Sync.t @ local -> 'k Capsule.Access.t -> 'a @ contended l once portable unique)
        @ local once portable unyielding
-    -> 'a Or_canceled.t @ contended once portable unique
+    -> 'a Or_canceled.t @ contended l once portable unique
 
   (** [with_access_or_cancel_poisoning s c t f] is
       [Completed (with_access_poisoning s t f)] if [c] is not canceled, otherwise it is
@@ -128,9 +131,9 @@ module type Sync = sig @@ portable
     Sync.t @ local
     -> Cancellation.t @ local
     -> 'k t @ local
-    -> f:(Sync.t @ local -> 'k Capsule.Access.t -> 'a @ contended once portable unique)
+    -> f:(Sync.t @ local -> 'k Capsule.Access.t -> 'a @ contended l once portable unique)
        @ local once portable unyielding
-    -> 'a Or_canceled.t @ contended once portable unique
+    -> 'a Or_canceled.t @ contended l once portable unique]
 
   (** {2 With a local [Password]} *)
 
@@ -208,7 +211,7 @@ module type Sync = sig @@ portable
   (** {2 With a unique [Key]} *)
 
   [%%template:
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   (** [with_key_poisoning s t ~f] locks [t] and runs [f], providing it a key for ['k]
       uniquely. If the function raises without returning the key back, the mutex is
@@ -259,7 +262,7 @@ module type Sync = sig @@ portable
   module Condition : Condition.S with type 'k lock := 'k t (** @open *)
 
   [%%template:
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   (** [with_key_and_condition_wait_poisoning w t ~f] locks [t] and runs [f], providing it
       with a key for ['k] uniquely and a ['k Condition.Wait.t] which provides the ability
@@ -382,7 +385,7 @@ end
 
 module type Await = sig @@ portable
   open Await_kernel
-  module Capsule := Capsule.Expert
+  module Capsule := Capsule.Prim
 
   (** Mutexes that can be held for an unbounded period of time *)
 
@@ -554,7 +557,7 @@ module type Await = sig @@ portable
   (** {2 With a unique [Key]} *)
 
   [%%template:
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   (** [with_key_poisoning t ~f] locks [t] and runs [f], providing it a key for ['k]
       uniquely. If the function raises without returning the key back, the mutex is
@@ -601,7 +604,7 @@ module type Await = sig @@ portable
   module Condition : Condition.S with type 'k lock := 'k t (** @open *)
 
   [%%template:
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   (** [with_key_and_condition_wait_poisoning w t ~f] locks [t] and runs [f], providing it
       with a key for ['k] uniquely and a ['k Condition.Wait.t] which provides the ability
@@ -796,10 +799,101 @@ module type Await = sig @@ portable
 end
 
 module type Mutex_common = sig @@ portable
-  module type Prim = Prim
-  module type Await = Await
-  module type Sync = Sync
-
   module Make_sync (Prim : Prim) : Sync with type 'k t = Prim.t
   module Make_await (Prim : Prim) : Await with type 'k t = Prim.t
+end
+
+module type With_state = sig @@ portable
+  (** Here is an example of a counter protected by a mutex embedded within an atomic
+      location:
+
+      {[
+        module Mutex = Await.Sync.Mutex
+
+        type t =
+          | T :
+              { mutable mutex : 'k Mutex.Loc.State.t [@atomic]
+              ; state : (int ref, 'k) Capsule.Data.t
+              }
+              -> t
+
+        let make (value : int) =
+          let (P key) = Capsule.Prim.create () in
+          T
+            { mutex = Mutex.Loc.make key
+            ; state = Capsule.Data.create (fun () -> ref value)
+            }
+        ;;
+
+        let fetch_and_add sync (T t) delta =
+          Mutex.Loc.with_access sync [%atomic.loc t.mutex] ~f:(fun _ access : int ->
+            let counter = Capsule.Data.unwrap ~access t.state in
+            let value = !counter in
+            counter := value + delta;
+            value)
+          [@nontail]
+        ;;
+      ]}
+
+      Note the use of [[@atomic]] to specify an atomic location and [[%atomic.loc _]] to
+      get a reference to the atomic location. *)
+
+  module State : sig
+    (** Internal state of a mutex location. *)
+
+    (** ['k t] represents the state of a mutex location protecting the key to the capsule
+        [k]. *)
+    type 'k t : immediate
+  end
+end
+
+module type Sync_loc = sig @@ portable
+  include With_state (** @inline *)
+
+  include Sync with type 'k t = 'k State.t Atomic.Loc.t (** @inline *)
+
+  (** {1 Initializing a mutex embedded within an atomic location} *)
+
+  (** [make key] computes the initial state for a mutex location. *)
+  val make : 'k Capsule.Prim.Key.t @ unique -> 'k State.t
+end
+
+module type Await_loc = sig @@ portable
+  include With_state (** @inline *)
+
+  include Await with type 'k t = 'k State.t Atomic.Loc.t (** @inline *)
+
+  (** {1 Initializing a mutex embedded within an atomic location} *)
+
+  (** [make key] computes the initial state for a mutex location. *)
+  val make : 'k Capsule.Prim.Key.t @ unique -> 'k State.t
+end
+
+module type Mutex = sig @@ portable
+  module Sync : sig
+    (** A poisonable mutual exclusion lock. *)
+
+    (** {1 Freestanding mutex} *)
+
+    include Sync (** @inline *)
+
+    (** {1 Mutex embedded within an atomic location} *)
+
+    (** A poisonable single word mutual exclusion lock embedded within an atomic location. *)
+    module Loc : Sync_loc
+  end
+
+  module Await : sig
+    (** A poisonable mutual exclusion lock. *)
+
+    (** {1 Freestanding mutex} *)
+
+    include Await (** @inline *)
+
+    (** {1 Mutex embedded within an atomic location} *)
+
+    (** A poisonable single word mutual exclusion lock embedded within an atomic location. *)
+
+    module Loc : Await_loc
+  end
 end

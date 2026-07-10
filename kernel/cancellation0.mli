@@ -44,6 +44,7 @@ end
 val add_trigger : t @ local -> Trigger.Source.t -> Link.t
 
 module Expert : sig
+  val check_clean_and_close : t @ local -> unit
   val globalize : t @ local -> t
   val create : unit -> t
 end

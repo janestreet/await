@@ -41,19 +41,18 @@ val%template create
 val yield : t @ local -> unit
 
 module For_testing : sig
-  (** [with_never ~f] calls [f] with an implementation of synchronizing that should never
-      be used. If [sync] is called with the implementation, it will raise.
+  (** [never] is an implementation of synchronizing that should never be used. If [sync]
+      is called with the implementation, it will raise.
 
       This is useful in tests, for testing operations which otherwise might conditionally
-      block in a single-threaded manner that never needs to block.
+      block, in a single-threaded manner that never needs to block - or, to test that a
+      blocking operation always blocks, eg using
+      [Expect_test_helpers_base.require_does_raise]
 
       Bear in mind that proper implementations of [sync] do not usually raise and are not
       documented to potentially raise. This means that abstractions built on sync may e.g.
-      leave the program in an invalid state when using [with_never]. *)
-  val with_never
-    : ('r : value_or_null).
-    f:(t @ local -> 'r @ forkable local once unique) @ local once
-    -> 'r @ forkable local once unique
+      leave the program in an invalid state when using [never]. *)
+  val never : t
 end
 
 (**/**)

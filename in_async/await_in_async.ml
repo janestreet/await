@@ -17,7 +17,7 @@ module Eff = struct
 
   and sync : type t. t op -> (t, _, _) Handled_effect.Continuation.t @ unique -> _ =
     fun (Sync trigger) k ->
-    let k = Capsule.Expert.(Data.wrap_unique ~access:Capsule.Initial.access) k in
+    let k = Capsule.Prim.(Data.wrap_unique ~access:Capsule.Initial.access) k in
     let continue = Capsule.Initial.Data.wrap continue in
     let context = Capsule.Initial.Data.wrap (Scheduler.current_execution_context ()) in
     match
@@ -26,7 +26,7 @@ module Eff = struct
     with
     | Null -> ()
     | This k ->
-      let k = Capsule.Expert.Data.unwrap_unique ~access:Capsule.Initial.access k in
+      let k = Capsule.Prim.Data.unwrap_unique ~access:Capsule.Initial.access k in
       handle (Handled_effect.continue k () [])
 
   and continue : #(_ * (unit, _, _) Handled_effect.Continuation.t) @ unique -> _ =
@@ -50,7 +50,7 @@ let yield handler =
 module Expert = struct
   let with_sync ~(f : _ @ local -> unit) =
     Eff.handle
-      ((Eff.run [@alert "-experimental_runtime5"]) (fun handler ->
+      (Eff.run (fun handler ->
          let handler = (Capsule.Initial.Data.wrap [@mode local]) handler in
          Sync.with_ ~sync ~yield:(This yield) handler ~f:(fun [@inline] w ->
            (f [@inlined hint]) w [@nontail])
@@ -88,6 +88,29 @@ let schedule_with_sync ?monitor ?priority f =
 let schedule_with_await ?monitor ?priority terminator ~f =
   let terminator = Terminator.Expert.globalize terminator in
   schedule_with_sync ?monitor ?priority (fun sync ->
+    f ((Await.Expert.create [@alloc stack]) ~sync ~terminator) [@nontail])
+  [@nontail]
+;;
+
+let schedule_with_yield ?monitor ?priority f =
+  schedule_with_sync ?monitor ?priority (fun s -> f (Yield.of_sync s) [@nontail])
+  [@nontail]
+;;
+
+let run_with_sync ~f =
+  assert%debug (Thread_safe.am_holding_async_lock ());
+  Deferred.create (fun ivar ->
+    Expert.with_sync ~f:(fun w ->
+      match f w with
+      | value -> Ivar.fill_exn ivar value
+      | exception exn -> Monitor.send_exn (Monitor.current ()) exn)
+    [@nontail])
+  [@nontail]
+;;
+
+let run_with_await terminator ~f =
+  let terminator = Terminator.Expert.globalize terminator in
+  run_with_sync ~f:(fun sync ->
     f ((Await.Expert.create [@alloc stack]) ~sync ~terminator) [@nontail])
   [@nontail]
 ;;

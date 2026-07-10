@@ -17,16 +17,16 @@ open! Portable_kernel
    v}
 
    The [Signaled] state is terminal. *)
-type state =
-  | Initial
+type _ state =
+  | Initial : [> `Initial ] state
   | Awaiting :
       { action : 'k @ contended portable unique -> unit @@ portable
       ; k : 'k @@ portable
       }
-      -> state
-  | Signaled
+      -> [> `Awaiting ] state
+  | Signaled : [> `Signaled ] state
 
-type t = state Atomic.t
+type t = [ `Initial | `Awaiting | `Signaled ] state Atomic.t
 
 let is_signalled t =
   match Atomic.get t with
@@ -39,28 +39,32 @@ module Source = struct
 
   let same = Base.phys_equal
 
-  let signal t =
-    match Atomic.get t with
-    | Signaled -> ()
-    | Awaiting current_r as current ->
-      (match
-         Atomic.compare_and_set t ~if_phys_equal_to:current ~replace_with:Signaled
-       with
-       | Set_here ->
-         current_r.action ((Obj.magic_unique [@mode contended portable]) current_r.k)
-       | Compare_failed -> ())
-    | Initial as current ->
-      (match
-         Atomic.compare_exchange t ~if_phys_equal_to:current ~replace_with:Signaled
-       with
-       | Signaled | Initial -> ()
-       | Awaiting current_r as current ->
-         (match
-            Atomic.compare_and_set t ~if_phys_equal_to:current ~replace_with:Signaled
-          with
-          | Set_here ->
-            current_r.action ((Obj.magic_unique [@mode contended portable]) current_r.k)
-          | Compare_failed -> ()))
+  let[@inline never] signal_slow_path t (Awaiting r as current : [ `Awaiting ] state) =
+    (* This non-inlined slow path generates two slow calls: the [compare_and_set] involves
+       a C call and the [action] calls an unknown function. Keeping this non-inlined
+       reduces code size and should not decrease performance significantly. *)
+    match Atomic.compare_and_set t ~if_phys_equal_to:current ~replace_with:Signaled with
+    | Set_here -> r.action ((Obj.magic_unique [@mode contended portable]) r.k)
+    | Compare_failed -> ()
+  ;;
+
+  let[@inline] signal t =
+    (* The inlined fast path carefully minimizes the size of generated code and makes
+       [signal] as fast as possible in the fast cases. *)
+    let current = Atomic.get t in
+    if not (phys_equal current Signaled)
+    then (
+      match
+        (* This generates an instruction as [Initial] and [Signaled] are both immediates.
+
+           We assume here that the state is [Initial]. In case it isn't, the core will get
+           exclusive ownership of the cache line and likely the second [compare_and_set]
+           on the [signal_slow_path] will be faster, which means that the extra write is
+           likely not as expensive as it might seem. *)
+        Atomic.compare_exchange t ~if_phys_equal_to:Initial ~replace_with:Signaled
+      with
+      | Signaled | Initial -> ()
+      | Awaiting _ as current -> signal_slow_path t current)
   ;;
 
   let is_signalled = is_signalled

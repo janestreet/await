@@ -128,6 +128,14 @@ module Expert : sig
       otherwise. Unlike {!is_canceled}, this version does not take a terminator, so should
       only be used where termination is already being handled separately. *)
   val is_canceled_ignore_termination : t @ local -> bool
+
+  (** [check_clean_and_close t] checks that [t] has no unsignalled triggers attached to it
+      and then cancels [t].
+
+      If you are manually managing a cancellation token, then it is good practice to
+      ensure that no triggers remain attached to the token after the token is no longer in
+      use. Doing so can reveal resource leaks and issues with scoping. *)
+  val check_clean_and_close : t @ local -> unit
 end
 
 module For_testing : sig

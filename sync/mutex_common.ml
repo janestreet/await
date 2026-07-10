@@ -1,10 +1,10 @@
 open Base
 open Import
-include Mutex_common_intf
+module Capsule = Capsule.Prim
 
 module
   [@inline] Make
-    (Prim : Mutex_common_intf.Prim)
+    (Prim : Mutex_intf.Prim)
     (C : Lock_common_intf.Capability_with_of_await) =
 struct
   type 'k t = Prim.t
@@ -126,17 +126,22 @@ struct
        interface.
     *)
 
+    [%%template
+    [@@@mode.default l = (local, global)]
+
     let[@inline] with_key
       : type (a : value_or_null) k.
         C.t @ local
         -> k t @ local
-        -> f:(k Capsule.Key.t @ unique -> #(a * k Capsule.Key.t) @ once unique)
+        -> f:(k Capsule.Key.t @ unique -> #(a * k Capsule.Key.t) @ l once unique)
            @ local once
-        -> a @ once unique
+        -> a @ l once unique
       =
       fun w t ~f ->
       Prim.acquire (C.unsafe_to_await w) t;
-      match f (Capsule.Key.unsafe_mk ()) with
+      match[@exclave_if_local l ~reasons:[ May_return_local ]]
+        f (Capsule.Key.unsafe_mk ())
+      with
       | #(res, _key) ->
         Prim.release t;
         res
@@ -146,14 +151,16 @@ struct
     let[@inline] try_with_key
       : type (a : value_or_null) k.
         k t @ local
-        -> f:(k Capsule.Key.t @ unique -> #(a * k Capsule.Key.t) @ once unique)
+        -> f:(k Capsule.Key.t @ unique -> #(a * k Capsule.Key.t) @ l once unique)
            @ local once
-        -> a Or_would_block.t @ once unique
+        -> a Or_would_block.t @ l once unique
       =
       fun t ~f ->
       if Prim.try_acquire t
       then (
-        match f (Capsule.Key.unsafe_mk ()) with
+        match[@exclave_if_local l ~reasons:[ May_return_local ]]
+          f (Capsule.Key.unsafe_mk ())
+        with
         | #(res, _key) ->
           Prim.release t;
           Acquired res
@@ -163,24 +170,26 @@ struct
 
     let[@inline] with_key_or_cancel
       :  C.t @ local -> Cancellation.t @ local -> 'k t @ local
-      -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique)
+      -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
          @ local once
-      -> 'a Or_canceled.t @ once unique
+      -> 'a Or_canceled.t @ l once unique
       =
       fun w c t ~f ->
       match Prim.acquire_or_cancel (C.unsafe_to_await w) c t with
       | Canceled -> Canceled
       | Completed () ->
-        (match f (Capsule.Key.unsafe_mk ()) with
+        (match[@exclave_if_local l ~reasons:[ May_return_local ]]
+           f (Capsule.Key.unsafe_mk ())
+         with
          | #(res, _key) ->
            Prim.release t;
            Completed res
          | exception exn -> Prim.release_and_reraise exn t)
-    ;;
+    ;;]
   end
 
   [%%template
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (local, global)]
 
   let[@inline] with_key_poisoning
     :  C.t @ local -> 'k t @ local
@@ -195,7 +204,7 @@ struct
        Prim.release t;
        res
      | exception exn -> Prim.poison_and_reraise exn t)
-    [@exclave_if_stack a]
+    [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;
 
   let[@inline] try_with_key_poisoning
@@ -213,7 +222,7 @@ struct
          Acquired res
        | exception exn -> Prim.poison_and_reraise exn t)
      else Would_block)
-    [@exclave_if_stack a]
+    [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;
 
   let[@inline] with_key_or_cancel_poisoning
@@ -223,7 +232,9 @@ struct
     -> 'a Or_canceled.t @ l once unique
     =
     fun w c t ~f ->
-    match[@exclave_if_stack a] Prim.acquire_or_cancel (C.unsafe_to_await w) c t with
+    match[@exclave_if_local l ~reasons:[ May_return_local ]]
+      Prim.acquire_or_cancel (C.unsafe_to_await w) c t
+    with
     | Canceled -> Canceled
     | Completed () ->
       (match f (Capsule.Key.unsafe_mk ()) with
@@ -231,75 +242,89 @@ struct
          Prim.release t;
          Completed res
        | exception exn -> Prim.poison_and_reraise exn t)
-  ;;]
-
-  let with_access_poisoning w t ~f =
-    (with_key_poisoning w t ~f:(fun key ->
-       let #(a, key) =
-         Capsule.Key.access key ~f:(fun access -> { portable = f access })
-       in
-       #({ contended = a }, key)))
-      .contended
-      .portable
   ;;
 
-  let try_with_access_poisoning t ~f : _ Or_would_block.t =
-    match
-      try_with_key_poisoning t ~f:(fun key ->
-        let #(a, key) =
-          Capsule.Key.access key ~f:(fun access -> { portable = f access })
+  let with_access_poisoning w t ~f =
+    ((with_key_poisoning [@mode l]) w t ~f:(fun key ->
+       (let #(a, key) =
+          (Capsule.Key.access [@mode l]) key ~f:(fun access ->
+            { portable = f access } [@exclave_if_local l ~reasons:[ May_return_local ]])
         in
         #({ contended = a }, key))
+       [@exclave_if_local l ~reasons:[ May_return_local ]]))
+      .contended
+      .portable
+      [@exclave_if_local l ~reasons:[ May_return_local ]]
+  ;;
+
+  let try_with_access_poisoning t ~f : _ Or_would_block.t @ l =
+    match[@exclave_if_local l ~reasons:[ May_return_local ]]
+      (try_with_key_poisoning [@mode l]) t ~f:(fun key ->
+        (let #(a, key) =
+           (Capsule.Key.access [@mode l]) key ~f:(fun access ->
+             { portable = f access } [@exclave_if_local l ~reasons:[ May_return_local ]])
+         in
+         #({ contended = a }, key))
+        [@exclave_if_local l ~reasons:[ May_return_local ]])
     with
     | Would_block -> Would_block
     | Acquired { contended = { portable = a } } -> Acquired a
   ;;
 
   let with_access w t ~f =
-    (Unsafe.with_key w t ~f:(fun key ->
-       let #(a, key) =
-         Capsule.Key.access key ~f:(fun access -> { portable = f access })
-       in
-       #({ contended = a }, key)))
-      .contended
-      .portable
-  ;;
-
-  let try_with_access t ~f : _ Or_would_block.t =
-    match
-      Unsafe.try_with_key t ~f:(fun key ->
-        let #(a, key) =
-          Capsule.Key.access key ~f:(fun access -> { portable = f access })
+    ((Unsafe.with_key [@mode l]) w t ~f:(fun key ->
+       (let #(a, key) =
+          (Capsule.Key.access [@mode l]) key ~f:(fun access ->
+            { portable = f access } [@exclave_if_local l ~reasons:[ May_return_local ]])
         in
         #({ contended = a }, key))
+       [@exclave_if_local l ~reasons:[ May_return_local ]]))
+      .contended
+      .portable
+      [@exclave_if_local l ~reasons:[ May_return_local ]]
+  ;;
+
+  let try_with_access t ~f : _ Or_would_block.t @ l =
+    match[@exclave_if_local l ~reasons:[ May_return_local ]]
+      (Unsafe.try_with_key [@mode l]) t ~f:(fun key ->
+        (let #(a, key) =
+           (Capsule.Key.access [@mode l]) key ~f:(fun access ->
+             { portable = f access } [@exclave_if_local l ~reasons:[ May_return_local ]])
+         in
+         #({ contended = a }, key))
+        [@exclave_if_local l ~reasons:[ May_return_local ]])
     with
     | Would_block -> Would_block
     | Acquired { contended = { portable = a } } -> Acquired a
   ;;
 
   let with_access_or_cancel_poisoning w c t ~f : _ Or_canceled.t =
-    match
-      with_key_or_cancel_poisoning w c t ~f:(fun key ->
-        let #(a, key) =
-          Capsule.Key.access key ~f:(fun access -> { portable = f access })
-        in
-        #({ contended = a }, key))
+    match[@exclave_if_local l ~reasons:[ May_return_local ]]
+      (with_key_or_cancel_poisoning [@mode l]) w c t ~f:(fun key ->
+        (let #(a, key) =
+           (Capsule.Key.access [@mode l]) key ~f:(fun access ->
+             { portable = f access } [@exclave_if_local l ~reasons:[ May_return_local ]])
+         in
+         #({ contended = a }, key))
+        [@exclave_if_local l ~reasons:[ May_return_local ]])
     with
     | Canceled -> Canceled
     | Completed { contended = { portable = a } } -> Completed a
   ;;
 
   let with_access_or_cancel w c t ~f : _ Or_canceled.t =
-    match
-      Unsafe.with_key_or_cancel w c t ~f:(fun key ->
-        let #(a, key) =
-          Capsule.Key.access key ~f:(fun access -> { portable = f access })
-        in
-        #({ contended = a }, key))
+    match[@exclave_if_local l ~reasons:[ May_return_local ]]
+      (Unsafe.with_key_or_cancel [@mode l]) w c t ~f:(fun key ->
+        (let #(a, key) =
+           (Capsule.Key.access [@mode l]) key ~f:(fun access ->
+             { portable = f access } [@exclave_if_local l ~reasons:[ May_return_local ]])
+         in
+         #({ contended = a }, key))
+        [@exclave_if_local l ~reasons:[ May_return_local ]])
     with
     | Canceled -> Canceled
     | Completed { contended = { portable = a } } -> Completed a
-  ;;
+  ;;]
 
   let with_password_poisoning w t ~f =
     (with_key_poisoning w t ~f:(fun key ->
@@ -417,7 +442,7 @@ struct
     end)
 
   [%%template
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   let[@inline] with_key_and_condition_wait_poisoning
     : type (a : value_or_null) k.
@@ -432,12 +457,12 @@ struct
     =
     fun w t ~f ->
     (Prim.acquire w t;
-     (Condition.with_wait [@alloc a])
+     (Condition.with_wait [@mode l])
        w
        t
        (Capsule.Key.unsafe_mk () : k Capsule.Key.t)
        (fun cw key ->
-         match[@exclave_if_stack a] f cw key with
+         match[@exclave_if_local l ~reasons:[ May_return_local ]] f cw key with
          | #(res, _key) ->
            (* If the caller has been able to give a key back to us, the lock must be held *)
            assert%debug (Condition.lock_is_held cw);
@@ -449,7 +474,7 @@ struct
            else (
              let bt = Backtrace.Exn.most_recent () in
              Exn.raise_with_original_backtrace exn bt)) [@nontail])
-    [@exclave_if_stack a]
+    [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;
 
   let with_key_and_condition_wait_or_cancel_poisoning
@@ -465,15 +490,17 @@ struct
       -> a Or_canceled.t @ l once unique
     =
     fun w c t ~f ->
-    match[@exclave_if_stack a] Prim.acquire_or_cancel w c t with
+    match[@exclave_if_local l ~reasons:[ May_return_local ]]
+      Prim.acquire_or_cancel w c t
+    with
     | Canceled -> Canceled
     | Completed () ->
-      (Condition.with_wait [@alloc a])
+      (Condition.with_wait [@mode l])
         w
         t
         (Capsule.Key.unsafe_mk () : k Capsule.Key.t)
         (fun cw key ->
-          match[@exclave_if_stack a] f cw key with
+          match[@exclave_if_local l ~reasons:[ May_return_local ]] f cw key with
           | #(res, _key) ->
             (* If the caller has been able to give a key back to us, the lock must be held *)
             assert%debug (Condition.lock_is_held cw);
@@ -490,8 +517,8 @@ struct
   module For_testing = Prim.For_testing
 end
 
-module [@inline] Make_sync (Prim : Mutex_common_intf.Prim) :
-  Mutex_common_intf.Sync with type 'k t = Prim.t = struct
+module [@inline] Make_sync (Prim : Mutex_intf.Prim) :
+  Mutex_intf.Sync with type 'k t = Prim.t = struct
   include Make (Prim) (Lock_common.Sync)
 
   (* The following definitions shadow the ones defined by Make, but also pass the Sync.t
@@ -499,22 +526,32 @@ module [@inline] Make_sync (Prim : Mutex_common_intf.Prim) :
      require an unyielding callback, but the signature exposes these functions as
      requiring unyielding callbacks, which is an important safety property. *)
 
-  let[@inline] with_access s t ~f =
-    with_access s t ~f:(fun access -> f s access [@nontail]) [@nontail]
+  [%%template
+  [@@@mode.default l = (local, global)]
+
+  let with_access s t ~f =
+    (with_access [@mode l]) s t ~f:(fun access ->
+      f s access [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;
 
   let[@inline] with_access_poisoning s t ~f =
-    with_access_poisoning s t ~f:(fun access -> f s access [@nontail]) [@nontail]
+    (with_access_poisoning [@mode l]) s t ~f:(fun access ->
+      f s access [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@exclave_if_local l ~reasons:[ May_return_local ]] [@nontail]
   ;;
 
   let[@inline] with_access_or_cancel s c t ~f =
-    with_access_or_cancel s c t ~f:(fun access -> f s access [@nontail]) [@nontail]
+    (with_access_or_cancel [@mode l]) s c t ~f:(fun access ->
+      f s access [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@exclave_if_local l ~reasons:[ May_return_local ]] [@nontail]
   ;;
 
   let[@inline] with_access_or_cancel_poisoning s c t ~f =
-    with_access_or_cancel_poisoning s c t ~f:(fun access -> f s access [@nontail])
-    [@nontail]
-  ;;
+    (with_access_or_cancel_poisoning [@mode l]) s c t ~f:(fun access ->
+      f s access [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@exclave_if_local l ~reasons:[ May_return_local ]] [@nontail]
+  ;;]
 
   let[@inline] with_password s t ~f =
     with_password s t ~f:(fun password -> f s password [@nontail]) [@nontail]
@@ -534,33 +571,39 @@ module [@inline] Make_sync (Prim : Mutex_common_intf.Prim) :
   ;;
 
   [%%template
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   let[@inline] with_key_poisoning s t ~f =
-    (with_key_poisoning [@alloc a]) s t ~f:(fun key ->
-      f s key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
+    (with_key_poisoning [@mode l]) s t ~f:(fun key ->
+      f s key [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;
 
   let[@inline] with_key_or_cancel_poisoning s c t ~f =
-    (with_key_or_cancel_poisoning [@alloc a]) s c t ~f:(fun key ->
-      f s key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
+    (with_key_or_cancel_poisoning [@mode l]) s c t ~f:(fun key ->
+      f s key [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;
 
   let[@inline] with_key_and_condition_wait_poisoning w t ~f =
-    (with_key_and_condition_wait_poisoning [@alloc a]) w t ~f:(fun cw key ->
-      f (Await.sync w) cw key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
+    (with_key_and_condition_wait_poisoning [@mode l]) w t ~f:(fun cw key ->
+      f
+        (Await.sync w)
+        cw
+        key [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;
 
   let[@inline] with_key_and_condition_wait_or_cancel_poisoning w c t ~f =
-    (with_key_and_condition_wait_or_cancel_poisoning [@alloc a]) w c t ~f:(fun cw key ->
-      f (Await.sync w) cw key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
+    (with_key_and_condition_wait_or_cancel_poisoning [@mode l]) w c t ~f:(fun cw key ->
+      f
+        (Await.sync w)
+        cw
+        key [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;]
 end
 
-module [@inline] Make_await (Prim : Mutex_common_intf.Prim) :
-  Mutex_common_intf.Await with type 'k t = Prim.t =
+module [@inline] Make_await (Prim : Mutex_intf.Prim) :
+  Mutex_intf.Await with type 'k t = Prim.t =
   Make (Prim) (Lock_common.Await)

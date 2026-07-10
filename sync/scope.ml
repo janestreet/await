@@ -185,45 +185,56 @@ module Global = struct
   ;;
 end
 
-let finish w t ~tasks_finished ~daemons_finished =
+let finish w t ~trigger ~tasks_finished ~daemons_finished =
   Live.decr (tasks t);
   Await.await_never_terminated w tasks_finished;
   Cancellation.Source.cancel
     (Cancellation.source t.inner.daemon_cancellation |> Or_null.value_exn);
   Live.decr (daemons t);
   Await.await_never_terminated w daemons_finished;
+  let _ : bool = Trigger.drop trigger in
+  Terminator.Expert.check_clean_and_close t.inner.terminator;
   Or_null.iter
     (Atomic.Loc.get [%atomic.loc t.inner.failure])
     ~f:(fun (exn, bt) -> Exn.raise_with_original_backtrace exn bt) [@nontail]
 ;;
 
-let with_ w context ~f =
-  Terminator.with_linked (Await.terminator w) (fun terminator ->
-    Cancellation.with_ (fun [@inline] daemon_cancellation ->
-      let tasks_finished = Trigger.create () in
-      let daemons_finished = Trigger.create () in
-      let t @ local =
-        { inner =
-            { tasks_count = Live.one
-            ; tasks_finished = Trigger.source tasks_finished
-            ; daemons_count = Live.one
-            ; daemons_finished = Trigger.source daemons_finished
-            ; daemon_cancellation = Cancellation.Expert.globalize daemon_cancellation
-            ; failure = Null
-            ; context
-            ; terminator = Terminator.Expert.globalize terminator
-            }
+let with_ await context ~f =
+  (* For performance reasons we intentionally do not use the [with_] functions of
+     [Terminator] nor [Cancellation] here as that would result in having three nested
+     [match _ with exception _] blocks and we only need one. *)
+  let tasks_finished = Trigger.create () in
+  let daemons_finished = Trigger.create () in
+  let child_terminator = Terminator.Expert.create () in
+  let child_terminator_source =
+    { aliased_many = Or_null.unsafe_value (Terminator.source child_terminator) }
+  in
+  let terminate { aliased_many } = Terminator.Source.terminate aliased_many in
+  let daemon_cancellation = Cancellation.Expert.create () in
+  let trigger = Trigger.create_with_action ~f:terminate child_terminator_source in
+  (match Terminator.add_trigger (Await.terminator await) (Trigger.source trigger) with
+   | Attached | Signaled -> ()
+   | Terminated -> terminate child_terminator_source);
+  let t @ local =
+    { inner =
+        { tasks_count = Live.one
+        ; tasks_finished = Trigger.source tasks_finished
+        ; daemons_count = Live.one
+        ; daemons_finished = Trigger.source daemons_finished
+        ; daemon_cancellation = Cancellation.Expert.globalize daemon_cancellation
+        ; failure = Null
+        ; context
+        ; terminator = child_terminator
         }
-      in
-      match f (Await.with_terminator w terminator) t with
-      | result ->
-        finish w t ~tasks_finished ~daemons_finished;
-        result
-      | exception exn ->
-        let bt = Backtrace.Exn.most_recent () in
-        raised t exn bt;
-        finish w t ~tasks_finished ~daemons_finished;
-        Exn.raise_with_original_backtrace exn bt)
-    [@nontail])
-  [@nontail]
+    }
+  in
+  match f (Await.with_terminator await child_terminator) t with
+  | result ->
+    finish await t ~trigger ~tasks_finished ~daemons_finished;
+    result
+  | exception exn ->
+    let bt = Backtrace.Exn.most_recent () in
+    raised t exn bt;
+    finish await t ~trigger ~tasks_finished ~daemons_finished;
+    Exn.raise_with_original_backtrace exn bt
 ;;

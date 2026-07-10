@@ -22,8 +22,9 @@ depends: [
   "portable"
   "portable_lockfree_htbl"
   "portable_mpmc_queue"
+  "ppx_assert"
   "ppx_debug_assert"
-  "ppx_fuelproof"
+  "ppx_inline_test"
   "ppx_jane"
   "ppx_sexp_conv"
   "ppx_sexp_value"
@@ -32,6 +33,9 @@ depends: [
   "dune"                   {>= "3.17.0"}
 ]
 available: arch != "x86_32"
+conflicts: [
+  "oxcaml-compiler" {< "5.2.0minus39"}
+]
 synopsis: "Implementations of awaiting and synchronization primitives for OxCaml"
 description: "
 [Await] provides implementations of awaiting and synchronization primitives for OxCaml.

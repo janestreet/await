@@ -25,8 +25,8 @@ module Make (Lock : Arg) = struct
             hence can return the lock back to the user *)
          cw.lock_is_held <- true;
          #(res, k)))
-      [@exclave_if_stack a]
-    [@@alloc a @ l = (heap_global, stack_local)]
+      [@exclave_if_local l ~reasons:[ May_return_local ]]
+    [@@mode l = (global, local)]
     ;;
   end
 
@@ -40,8 +40,8 @@ module Make (Lock : Arg) = struct
           (* We know the lock is held; we take the key as an argument to prove it *)
           true
       }
-      key [@nontail] [@exclave_if_stack a]
-  [@@alloc a @ l = (heap_global, stack_local)]
+      key [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]]
+  [@@mode l = (global, local)]
   ;;
 
   type 'k t = bool Awaitable.t
@@ -59,20 +59,26 @@ module Make (Lock : Arg) = struct
     Lock.unsafe_release lock;
     cw.lock_is_held <- false;
     Await.await_until_terminated await trigger;
-    Awaitable.Awaiter.cancel_and_remove awaiter;
-    match Lock.unsafe_acquire await lock with
-    | exception (Await.Terminated as exn) ->
-      (* It might be the case that, eg, waiting on a condition variable is not actually
-         terminated, but then the terminator gets terminated before we get to re-acquire
-         the lock. In that case, we need to make sure to re-signal the condition variable
-         to avoid dropping the signal (which could cause a deadlock). *)
-      let bt = Backtrace.Exn.most_recent () in
+    if Await.is_terminated await
+    then (
+      Awaitable.Awaiter.cancel_and_remove awaiter;
       Awaitable.signal t;
-      (match Exn.raise_with_original_backtrace exn bt with
-       | (_ : Nothing.t) -> .)
-    | () ->
-      cw.lock_is_held <- true;
-      k
+      match raise Await.Terminated with
+      | (_ : Nothing.t) -> .)
+    else (
+      match Lock.unsafe_acquire await lock with
+      | exception (Await.Terminated as exn) ->
+        (* It might be the case that, eg, waiting on a condition variable is not actually
+           terminated, but then the terminator gets terminated before we get to re-acquire
+           the lock. In that case, we need to make sure to re-signal the condition
+           variable to avoid dropping the signal (which could cause a deadlock). *)
+        let bt = Backtrace.Exn.most_recent () in
+        Awaitable.signal t;
+        (match Exn.raise_with_original_backtrace exn bt with
+         | (_ : Nothing.t) -> .)
+      | () ->
+        cw.lock_is_held <- true;
+        k)
   ;;
 
   let signal = Awaitable.signal

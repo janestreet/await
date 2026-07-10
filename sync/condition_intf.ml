@@ -1,5 +1,6 @@
 open! Base
 open! Import
+module Capsule = Capsule.Prim
 
 module type S = sig @@ portable
   (** Condition variable for waiting for changes to state protected by a lock. *)
@@ -29,7 +30,7 @@ module type S = sig @@ portable
       -> 'k Capsule.Key.t @ unique
       -> f:(Await.t @ local -> 'a @ l once unique) @ local once
       -> #('a * 'k Capsule.Key.t) @ l once unique
-    [@@alloc a @ l = (heap_global, stack_local)]
+    [@@mode l = (global, local)]
   end
 
   (** [create ()] creates a new condition variable associated with the matching ['k lock]
@@ -87,7 +88,7 @@ module type S_private = sig @@ portable
     -> 'k Capsule.Key.t @ unique
     -> ('k Wait.t @ local -> 'k Capsule.Key.t @ unique -> 'r @ l once unique) @ local once
     -> 'r @ l once unique
-  [@@alloc a @ l = (heap_global, stack_local)]
+  [@@mode l = (global, local)]
 
   val lock_is_held : 'k Wait.t @ local -> bool
 end

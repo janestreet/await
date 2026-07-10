@@ -14,7 +14,7 @@ module Sync = struct
     type packed = P : 'k t -> packed [@@unboxed]
 
     let create () =
-      let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
+      let (P (type k) (key : k Capsule.Prim.Key.t)) = Capsule.Prim.create () in
       P (Sync.Mutex.create key)
     ;;
 
@@ -140,8 +140,8 @@ module Sync = struct
 
     let destroy s (P { mutex; data }) =
       let key = Sync.Mutex.acquire_and_poison s mutex in
-      let access = Capsule.Expert.Key.destroy key in
-      Capsule.Expert.Data.unwrap data ~access
+      let access = Capsule.Prim.Key.destroy key in
+      Capsule.Prim.Data.unwrap data ~access
     ;;
   end
 
@@ -153,7 +153,7 @@ module Sync = struct
     type packed = P : 'k t -> packed [@@unboxed]
 
     let create () =
-      let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
+      let (P (type k) (key : k Capsule.Prim.Key.t)) = Capsule.Prim.create () in
       P (Sync.Rwlock.create key)
     ;;
 
@@ -418,7 +418,7 @@ module Await = struct
     type packed = P : 'k t -> packed [@@unboxed]
 
     let create () =
-      let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
+      let (P (type k) (key : k Capsule.Prim.Key.t)) = Capsule.Prim.create () in
       P (Await.Mutex.create key)
     ;;
 
@@ -548,8 +548,8 @@ module Await = struct
 
     let destroy await (P { mutex; data }) =
       let key = Await.Mutex.acquire_and_poison await mutex in
-      let access = Capsule.Expert.Key.destroy key in
-      Capsule.Expert.Data.unwrap data ~access
+      let access = Capsule.Prim.Key.destroy key in
+      Capsule.Prim.Data.unwrap data ~access
     ;;
   end
 
@@ -561,7 +561,7 @@ module Await = struct
     type packed = P : 'k t -> packed [@@unboxed]
 
     let create () =
-      let (P (type k) (key : k Capsule.Expert.Key.t)) = Capsule.Expert.create () in
+      let (P (type k) (key : k Capsule.Prim.Key.t)) = Capsule.Prim.create () in
       P (Await.Rwlock.create key)
     ;;
 

@@ -85,15 +85,18 @@ let await_with_terminate_or_cancel t cancellation trigger ~terminate_or_cancel r
 
 let is_terminated t = Terminator.is_terminated t.terminator [@nontail]
 let with_terminator t terminator = exclave_ { t with terminator }
-let yield { sync; _ } = Sync.yield sync
+let check_terminated t = Terminator.check (terminator t) [@nontail]
+
+let yield t =
+  check_terminated t;
+  Sync.yield (sync t) [@nontail]
+;;
+
 let is_canceled t c = Cancellation.is_canceled c ~terminator:(terminator t) [@nontail]
 let check_canceled t c = Cancellation.check c ~terminator:(terminator t) [@nontail]
 
 module For_testing = struct
-  let with_never ~f = exclave_
-    Sync.For_testing.with_never ~f:(fun sync -> exclave_
-      f ((create [@alloc stack]) ~sync ~terminator:Terminator.unkillable))
-  ;;
+  let never = create ~sync:Sync.For_testing.never ~terminator:Terminator.unkillable
 end
 
 module Expert = struct

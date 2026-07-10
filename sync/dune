@@ -4,5 +4,5 @@
  (libraries await_kernel base basement capsule portable.adaptive_backoff
    portable.common portable.kernel portable_lockfree_htbl portable_mpmc_queue)
  (preprocess
-  (pps ppx_template ppx_debug_assert ppx_sexp_conv ppx_sexp_value
-    ppx_shorthand)))
+  (pps ppx_template ppx_assert ppx_debug_assert ppx_inline_test ppx_sexp_conv
+    ppx_sexp_value ppx_shorthand)))

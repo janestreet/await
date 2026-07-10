@@ -40,5 +40,15 @@ val read_or_cancel
   -> 'a Or_canceled.t @ contended
 
 (** [peek t] returns [This v] iff [t] is full with value [v], or [Null] if [t] is not
-    full. *)
+    full.
+
+    Note that it's important that for this ['a t], ['a] has kind [value] (and not
+    [value_or_null]) since in the latter case a non-full [t] would be distinguishable from
+    a [t] filled with [Null]. *)
 val peek : 'a t @ local -> 'a or_null @ contended
+
+(** [is_empty t] returns true if [t] is empty. *)
+val is_empty : ('a : value_or_null). 'a t @ local -> bool
+
+(** [is_full t] returns true if [t] is full. *)
+val is_full : ('a : value_or_null). 'a t @ local -> bool

@@ -1,5 +1,6 @@
 open! Base
 open! Import
+module Capsule = Capsule.Prim
 
 (** See [Adaptive_backoff.once] *)
 let log_scale = 10
@@ -149,15 +150,17 @@ module Prim = struct
 
   type t = State.t Awaitable.t
 
-  type ('a, _) result =
-    | Value : ('a, 'a) result
-    | Or_canceled : ('a, 'a Or_canceled.t) result
+  type ('a, _, 'w) result =
+    | Value : ('a, 'a, Await.t) result
+    | Or_canceled : ('a, 'a Or_canceled.t, Await.t) result
+    | Or_would_block : ('a, 'a Or_would_block.t, unit) result
 
-  let[@inline never] acquire_as (type r) w c t (r : (unit, r) result) : r =
+  let[@inline never] acquire_as (type r w) (w : w) c t (r : (unit, r, w) result) : r =
     let[@inline] completed () : r =
       match r with
       | Value -> ()
       | Or_canceled -> Completed ()
+      | Or_would_block -> Acquired ()
     in
     (* This is intentionally optimized optimistically for low contention. *)
     let assumption = State.no_awaiters in
@@ -168,7 +171,7 @@ module Prim = struct
     if phys_equal before assumption
     then completed ()
     else (
-      let[@inline] rec acquire_awaiting w c t before =
+      let[@inline] rec acquire_awaiting (w : w) c t before =
         if State.is_unlocked before
         then (
           let after = before |> State.and_writers |> State.and_exclusive in
@@ -200,7 +203,8 @@ module Prim = struct
               (match Awaitable.await_or_cancel w c t ~until_phys_unequal_to:after with
                | Signaled -> acquire_awaiting w c t (Awaitable.get t)
                | Terminated -> raise Await.Terminated
-               | Canceled -> Or_canceled.Canceled))
+               | Canceled -> Or_canceled.Canceled)
+            | Or_would_block -> Or_would_block.Would_block)
           else (
             Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
             acquire_awaiting w c t (Awaitable.get t)))
@@ -210,6 +214,7 @@ module Prim = struct
 
   let acquire_or_cancel w c t = acquire_as w c t Or_canceled
   let acquire w t = acquire_as w Cancellation.never t Value
+  let try_acquire t = acquire_as () Cancellation.never t Or_would_block
 
   let[@inline never] release t =
     (* This is intentionally optimized optimistically for low contention. *)
@@ -246,17 +251,20 @@ module Prim = struct
     Exn.raise_with_original_backtrace exn bt
   ;;
 
-  let[@inline never] acquire_shared_as (type r) w c t (r : (unit, r) result) : r =
+  let[@inline never] acquire_shared_as (type r w) (w : w) c t (r : (unit, r, w) result)
+    : r
+    =
     let[@inline] completed () : r =
       match r with
       | Value -> ()
       | Or_canceled -> Completed ()
+      | Or_would_block -> Acquired ()
     in
     let prior = State.incr_shared t in
     if not (State.is_exclusive prior)
     then completed ()
     else (
-      let[@inline] rec acquire_shared_awaiting w c t =
+      let[@inline] rec acquire_shared_awaiting (w : w) c t =
         let before = Awaitable.get t in
         if not (State.is_exclusive before)
         then (
@@ -289,7 +297,8 @@ module Prim = struct
               (match Awaitable.await_or_cancel w c t ~until_phys_unequal_to:after with
                | Signaled -> acquire_shared_awaiting w c t
                | Terminated -> raise Await.Terminated
-               | Canceled -> Or_canceled.Canceled))
+               | Canceled -> Or_canceled.Canceled)
+            | Or_would_block -> Or_would_block.Would_block)
           else (
             Adaptive_backoff.once ~random_key:(Awaitable.random_key t) ~log_scale;
             acquire_shared_awaiting w c t))
@@ -313,6 +322,7 @@ module Prim = struct
 
   let acquire_shared_or_cancel w c t = acquire_shared_as w c t Or_canceled
   let acquire_shared w t = acquire_shared_as w Cancellation.never t Value
+  let try_acquire_shared t = acquire_shared_as () Cancellation.never t Or_would_block
 
   let[@inline never] release_shared t =
     let prior = State.decr_shared t in
@@ -622,6 +632,24 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
       | exception exn -> Prim.release_and_reraise exn t
     ;;
 
+    let[@inline] try_with_key
+      : ('a : value_or_null) 'k.
+      'k t @ local
+      -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ once unique)
+         @ local once
+      -> 'a Or_would_block.t @ once unique
+      =
+      fun t ~f ->
+      match Prim.try_acquire t with
+      | Would_block -> Would_block
+      | Acquired () ->
+        (match f (Capsule.Key.unsafe_mk ()) with
+         | #(res, _key) ->
+           Prim.release t;
+           Acquired res
+         | exception exn -> Prim.release_and_reraise exn t)
+    ;;
+
     let[@inline] with_key_or_cancel
       : ('a : value_or_null) 'k.
       C.t @ local
@@ -674,6 +702,38 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
       | exception exn -> Prim.freeze_release_shared_and_reraise exn t
     ;;
 
+    let[@inline] try_with_key_shared
+      : ('a : value_or_null) 'k.
+      'k t @ local
+      -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
+      -> 'a Or_would_block.t @ once unique
+      =
+      fun t ~f ->
+      match Prim.try_acquire_shared t with
+      | Would_block -> Would_block
+      | Acquired () ->
+        (match f (Capsule.Key.unsafe_mk ()) with
+         | res ->
+           Prim.release_shared t;
+           Acquired res
+         | exception exn -> Prim.release_shared_and_reraise exn t)
+    ;;
+
+    let[@inline] try_with_key_shared_freezing
+      :  'k t @ local -> f:('k Capsule.Key.t -> 'a @ once unique) @ local once
+      -> 'a Or_would_block.t @ once unique
+      =
+      fun t ~f ->
+      match Prim.try_acquire_shared t with
+      | Would_block -> Would_block
+      | Acquired () ->
+        (match f (Capsule.Key.unsafe_mk ()) with
+         | res ->
+           Prim.release_shared t;
+           Acquired res
+         | exception exn -> Prim.freeze_release_shared_and_reraise exn t)
+    ;;
+
     let[@inline] with_key_shared_or_cancel
       : ('a : value_or_null) 'k.
       C.t @ local
@@ -711,7 +771,7 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
   end
 
   [%%template
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   let[@inline] with_key_poisoning
     : ('a : value_or_null) 'k.
@@ -728,7 +788,7 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
        Prim.release t;
        res
      | exception exn -> Prim.poison_and_reraise exn t)
-    [@exclave_if_stack a]
+    [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;
 
   let[@inline] with_key_or_cancel_poisoning
@@ -741,7 +801,9 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
     -> 'a Or_canceled.t @ l once unique
     =
     fun w c t ~f ->
-    match[@exclave_if_stack a] Prim.acquire_or_cancel (C.unsafe_to_await w) c t with
+    match[@exclave_if_local l ~reasons:[ May_return_local ]]
+      Prim.acquire_or_cancel (C.unsafe_to_await w) c t
+    with
     | Canceled -> Canceled
     | Completed () ->
       (match f (Capsule.Key.unsafe_mk ()) with
@@ -749,11 +811,35 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
          Prim.release t;
          Completed res
        | exception exn -> Prim.poison_and_reraise exn t)
+  ;;
+
+  let[@inline] try_with_key_poisoning
+    : ('a : value_or_null) 'k.
+    'k t @ local
+    -> f:('k Capsule.Key.t @ unique -> #('a * 'k Capsule.Key.t) @ l once unique)
+       @ local once
+    -> 'a Or_would_block.t @ l once unique
+    =
+    fun t ~f ->
+    match[@exclave_if_local l ~reasons:[ May_return_local ]] Prim.try_acquire t with
+    | Would_block -> Would_block
+    | Acquired () ->
+      (match f (Capsule.Key.unsafe_mk ()) with
+       | #(res, _key) ->
+         Prim.release t;
+         Acquired res
+       | exception exn -> Prim.poison_and_reraise exn t)
   ;;]
 
   let acquire w t =
     Prim.acquire w t;
     Guard.create t
+  ;;
+
+  let try_acquire t : _ Or_would_block.t =
+    match Prim.try_acquire t with
+    | Would_block -> Would_block
+    | Acquired () -> Acquired (Guard.create t)
   ;;
 
   let acquire_or_cancel w c t : _ Or_canceled.t =
@@ -765,6 +851,12 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
   let acquire_shared w t =
     Prim.acquire_shared w t;
     Shared_guard.create t
+  ;;
+
+  let try_acquire_shared t : _ Or_would_block.t =
+    match Prim.try_acquire_shared t with
+    | Would_block -> Would_block
+    | Acquired () -> Acquired (Shared_guard.create t)
   ;;
 
   let acquire_shared_or_cancel w c t : _ Or_canceled.t =
@@ -791,6 +883,30 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
        #({ contended = a }, key)))
       .contended
       .portable
+  ;;
+
+  let try_with_access t ~f : _ Or_would_block.t =
+    match
+      Unsafe.try_with_key t ~f:(fun key ->
+        let #(a, key) =
+          Capsule.Key.access key ~f:(fun access -> { portable = f access })
+        in
+        #({ contended = a }, key))
+    with
+    | Would_block -> Would_block
+    | Acquired { contended = { portable = a } } -> Acquired a
+  ;;
+
+  let try_with_access_poisoning t ~f : _ Or_would_block.t =
+    match
+      try_with_key_poisoning t ~f:(fun key ->
+        let #(a, key) =
+          Capsule.Key.access key ~f:(fun access -> { portable = f access })
+        in
+        #({ contended = a }, key))
+    with
+    | Would_block -> Would_block
+    | Acquired { contended = { portable = a } } -> Acquired a
   ;;
 
   let with_access_or_cancel w c t ~f : _ Or_canceled.t =
@@ -835,6 +951,28 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
       .portable
   ;;
 
+  let try_with_access_shared t ~f : _ Or_would_block.t =
+    match
+      Unsafe.try_with_key_shared t ~f:(fun key ->
+        { contended =
+            Capsule.Key.access_shared key ~f:(fun access -> { portable = f access })
+        })
+    with
+    | Would_block -> Would_block
+    | Acquired { contended = { portable = a } } -> Acquired a
+  ;;
+
+  let try_with_access_shared_freezing t ~f : _ Or_would_block.t =
+    match
+      Unsafe.try_with_key_shared_freezing t ~f:(fun key ->
+        { contended =
+            Capsule.Key.access_shared key ~f:(fun access -> { portable = f access })
+        })
+    with
+    | Would_block -> Would_block
+    | Acquired { contended = { portable = a } } -> Acquired a
+  ;;
+
   let with_access_shared_or_cancel w c t ~f : _ Or_canceled.t =
     match
       Unsafe.with_key_shared_or_cancel w c t ~f:(fun key ->
@@ -869,6 +1007,26 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
       .many
   ;;
 
+  let try_with_password t ~f : _ Or_would_block.t =
+    match
+      Unsafe.try_with_key t ~f:(fun key ->
+        Capsule.Key.with_password key ~f:(fun password -> { many = f password })
+        [@nontail])
+    with
+    | Would_block -> Would_block
+    | Acquired { many = a } -> Acquired a
+  ;;
+
+  let try_with_password_poisoning t ~f : _ Or_would_block.t =
+    match
+      try_with_key_poisoning t ~f:(fun key ->
+        Capsule.Key.with_password key ~f:(fun password -> { many = f password })
+        [@nontail])
+    with
+    | Would_block -> Would_block
+    | Acquired { many = a } -> Acquired a
+  ;;
+
   let with_password_or_cancel w c t ~f : _ Or_canceled.t =
     match
       Unsafe.with_key_or_cancel w c t ~f:(fun key ->
@@ -901,6 +1059,26 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
        Capsule.Key.with_password_shared key ~f:(fun password -> { many = f password })
        [@nontail]))
       .many
+  ;;
+
+  let try_with_password_shared t ~f : _ Or_would_block.t =
+    match
+      Unsafe.try_with_key_shared t ~f:(fun key ->
+        Capsule.Key.with_password_shared key ~f:(fun password -> { many = f password })
+        [@nontail])
+    with
+    | Would_block -> Would_block
+    | Acquired { many = a } -> Acquired a
+  ;;
+
+  let try_with_password_shared_freezing t ~f : _ Or_would_block.t =
+    match
+      Unsafe.try_with_key_shared_freezing t ~f:(fun key ->
+        Capsule.Key.with_password_shared key ~f:(fun password -> { many = f password })
+        [@nontail])
+    with
+    | Would_block -> Would_block
+    | Acquired { many = a } -> Acquired a
   ;;
 
   let with_password_shared_or_cancel w c t ~f : _ Or_canceled.t =
@@ -939,7 +1117,7 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
     end)
 
   [%%template
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   let[@inline] with_key_and_condition_wait_poisoning
     : type (a : value_or_null) k.
@@ -954,12 +1132,12 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
     =
     fun w t ~f ->
     (Prim.acquire w t;
-     (Condition.with_wait [@alloc a])
+     (Condition.with_wait [@mode l])
        w
        t
        (Capsule.Key.unsafe_mk () : k Capsule.Key.t)
        (fun cw key ->
-         match[@exclave_if_stack a] f cw key with
+         match[@exclave_if_local l ~reasons:[ May_return_local ]] f cw key with
          | #(res, _key) ->
            (* If the caller has been able to give a key back to us, the lock must be held *)
            assert%debug (Condition.lock_is_held cw);
@@ -971,7 +1149,7 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
            else (
              let bt = Backtrace.Exn.most_recent () in
              Exn.raise_with_original_backtrace exn bt)) [@nontail])
-    [@exclave_if_stack a]
+    [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;
 
   let with_key_and_condition_wait_or_cancel_poisoning
@@ -987,15 +1165,17 @@ module [@inline] Make (C : Lock_common.Capability_with_of_await) = struct
       -> a Or_canceled.t @ l once unique
     =
     fun w c t ~f ->
-    match[@exclave_if_stack a] Prim.acquire_or_cancel w c t with
+    match[@exclave_if_local l ~reasons:[ May_return_local ]]
+      Prim.acquire_or_cancel w c t
+    with
     | Canceled -> Canceled
     | Completed () ->
-      (Condition.with_wait [@alloc a])
+      (Condition.with_wait [@mode l])
         w
         t
         (Capsule.Key.unsafe_mk () : k Capsule.Key.t)
         (fun cw key ->
-          match[@exclave_if_stack a] f cw key with
+          match[@exclave_if_local l ~reasons:[ May_return_local ]] f cw key with
           | #(res, _key) ->
             (* If the caller has been able to give a key back to us, the lock must be held *)
             assert%debug (Condition.lock_is_held cw);
@@ -1096,30 +1276,42 @@ module Sync = struct
   ;;
 
   [%%template
-  [@@@alloc.default a @ l = (heap_global, stack_local)]
+  [@@@mode.default l = (global, local)]
 
   let[@inline] with_key_poisoning s t ~f =
-    (with_key_poisoning [@alloc a]) s t ~f:(fun key ->
-      f s key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
+    (with_key_poisoning [@mode l]) s t ~f:(fun key ->
+      f s key [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]]
+  ;;
+
+  let[@inline] try_with_key_poisoning t ~f =
+    (try_with_key_poisoning [@mode l]) t ~f:(fun key ->
+      f key [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;
 
   let[@inline] with_key_or_cancel_poisoning s c t ~f =
-    (with_key_or_cancel_poisoning [@alloc a]) s c t ~f:(fun key ->
-      f s key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
+    (with_key_or_cancel_poisoning [@mode l]) s c t ~f:(fun key ->
+      f s key [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;
 
   let[@inline] with_key_and_condition_wait_poisoning w t ~f =
-    (with_key_and_condition_wait_poisoning [@alloc a]) w t ~f:(fun cw key ->
-      f (Await.sync w) cw key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
+    (with_key_and_condition_wait_poisoning [@mode l]) w t ~f:(fun cw key ->
+      f
+        (Await.sync w)
+        cw
+        key [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;
 
   let[@inline] with_key_and_condition_wait_or_cancel_poisoning w c t ~f =
-    (with_key_and_condition_wait_or_cancel_poisoning [@alloc a]) w c t ~f:(fun cw key ->
-      f (Await.sync w) cw key [@nontail] [@exclave_if_stack a])
-    [@nontail] [@exclave_if_stack a]
+    (with_key_and_condition_wait_or_cancel_poisoning [@mode l]) w c t ~f:(fun cw key ->
+      f
+        (Await.sync w)
+        cw
+        key [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]])
+    [@nontail] [@exclave_if_local l ~reasons:[ May_return_local ]]
   ;;]
 end
 

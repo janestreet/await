@@ -21,6 +21,28 @@ val schedule_with_await
   -> f:(Await.t @ local -> 'a) @ global once
   -> 'a Deferred.t
 
+(** [schedule_with_yield ~f] schedules [f y] as a concurrent task to run on the async
+    scheduler with a [y : Yield.t] that will yield to the async scheduler on calls to
+    [Yield.yield] *)
+val schedule_with_yield
+  :  ?monitor:Monitor.t
+  -> ?priority:Priority.t
+  -> (Yield.t @ local -> 'a) @ global once
+  -> 'a Deferred.t
+
+(** [run_with_sync] is like [schedule_with_sync], except [f] is started immediately rather
+    than enqueuing onto the async scheduler. [run_with_sync] must be called within the
+    async scheduler. *)
+val run_with_sync : f:(Sync.t @ local -> 'a) @ global once -> 'a Deferred.t
+
+(** [run_with_await] is like [schedule_with_await], except [f] is started immediately
+    rather than enqueuing onto the async scheduler. [run_with_await] must be called within
+    the async scheduler. *)
+val run_with_await
+  :  Terminator.t
+  -> f:(Await.t @ local -> 'a) @ global once
+  -> 'a Deferred.t
+
 (** [await_deferred w deferred] awaits until the deferred becomes determined.
 
     @raise [Terminated] if [w] is terminated before [deferred] becomes determined. *)

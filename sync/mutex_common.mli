@@ -1,1 +1,1 @@
-include Mutex_common_intf.Mutex_common (** @inline *)
+include Mutex_intf.Mutex_common (** @inline *)

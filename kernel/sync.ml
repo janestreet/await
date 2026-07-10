@@ -19,13 +19,13 @@ let with_ ~yield ~sync context ~f = exclave_
     | This yield -> This ((Capsule.Data.wrap [@mode local]) ~access yield)
   in
   let context = (Capsule.Data.wrap [@mode local]) ~access context in
-  Capsule.Expert.Password.with_current access (fun password -> exclave_
+  (Capsule.Prim.Password.with_current [@mode local]) access (fun password -> exclave_
     f
       (T
          { context
          ; sync =
              (fun #(ctx, tgr) ->
-               Capsule.Expert.Data.Local.iter
+               Capsule.Prim.Data.Local.iter
                  ~password
                  ((Capsule.Data.both [@mode local]) ctx sync)
                  ~f:(fun (ctx, sync) -> sync #(ctx, tgr))
@@ -36,7 +36,7 @@ let with_ ~yield ~sync context ~f = exclave_
               | This yield ->
                 This
                   (fun ctx ->
-                    Capsule.Expert.Data.Local.iter
+                    Capsule.Prim.Data.Local.iter
                       ~password
                       ((Capsule.Data.both [@mode local]) ctx yield)
                       ~f:(fun (ctx, yield) -> yield ctx)
@@ -68,14 +68,19 @@ let yield (T { yield; context; sync = _ }) =
 ;;
 
 module For_testing = struct
-  let with_never ~f = exclave_
-    let yield = Null in
-    let sync #((), { global = (_ : Trigger.t) }) =
+  let never =
+    let yield =
+      (* We intentionally allow [yield], i.e. do not raise from it. [yield] provides a
+         hint to the scheduler that "I could be more fair here, if the scheduler wanted me
+         to be" and is different enough from (un)bounded await for some explicit signal. *)
+      Null
+    in
+    let sync #({ portended = () }, { global = (_ : Trigger.t) }) =
       failwith
         "[sync never] was called. Usually this means that an operation blocked which was \
          expected to never block"
     in
-    f (T { yield; sync; context = () })
+    create ~yield ~sync ()
   ;;
 end
 
